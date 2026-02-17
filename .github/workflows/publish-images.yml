@@ -92,6 +92,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ghcr.io/donnype/puddle-${{ matrix.lang }}:${{ matrix.duckdb }}-${{ steps.rt.outputs.version }}
+          cache-from: type=registry,ref=ghcr.io/donnype/puddle-${{ matrix.lang }}:${{ matrix.duckdb }}-${{ steps.rt.outputs.version }}
+          cache-to: type=inline
           build-args: |
             DUCKDB_VERSION=${{ matrix.duckdb }}
             ${{ steps.arg.outputs.name }}=${{ steps.rt.outputs.version }}
