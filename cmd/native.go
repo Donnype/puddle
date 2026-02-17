@@ -206,21 +206,44 @@ func goSDKVersion(duckdbVer string) (string, error) {
 	return "", fmt.Errorf("unsupported DuckDB version for Go: %s (add mapping)", duckdbVer)
 }
 
+func goModulePath(sdkVer string) string {
+	// v2.5.0+ moved to github.com/duckdb/duckdb-go/v2.
+	// v2.4.0 and earlier used github.com/marcboeker/go-duckdb/v2.
+	if sdkVer >= "v2.5.0" {
+		return "github.com/duckdb/duckdb-go/v2"
+	}
+	return "github.com/marcboeker/go-duckdb/v2"
+}
+
 func setupGo(ctx context.Context, dir, binary, duckdbVer string) ([]string, error) {
 	sdkVer, err := goSDKVersion(duckdbVer)
 	if err != nil {
 		return nil, err
 	}
 
-	// Rename go.mod.tmpl to go.mod with version substituted.
+	modPath := goModulePath(sdkVer)
+
+	// Rename go.mod.tmpl to go.mod with version and module path substituted.
 	tmplPath := filepath.Join(dir, "go.mod.tmpl")
 	data, err := os.ReadFile(tmplPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading go.mod.tmpl: %w", err)
 	}
-	modContent := strings.ReplaceAll(string(data), "SDK_VERSION_PLACEHOLDER", sdkVer)
+	modContent := strings.ReplaceAll(string(data), "MODULE_PATH_PLACEHOLDER", modPath)
+	modContent = strings.ReplaceAll(modContent, "SDK_VERSION_PLACEHOLDER", sdkVer)
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0644); err != nil {
 		return nil, fmt.Errorf("writing go.mod: %w", err)
+	}
+
+	// Substitute the module path in repl.go too.
+	replPath := filepath.Join(dir, "repl.go")
+	replData, err := os.ReadFile(replPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading repl.go: %w", err)
+	}
+	replContent := strings.ReplaceAll(string(replData), "MODULE_PATH_PLACEHOLDER", modPath)
+	if err := os.WriteFile(replPath, []byte(replContent), 0644); err != nil {
+		return nil, fmt.Errorf("writing repl.go: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Running go mod tidy...\n")

@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	_ "github.com/duckdb/duckdb-go/v2"
+	_ "MODULE_PATH_PLACEHOLDER"
 )
 
 func main() {
