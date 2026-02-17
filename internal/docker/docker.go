@@ -9,13 +9,19 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"strings"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"golang.org/x/term"
 )
+
+// GHCRPrefix is the GHCR registry prefix for pre-built puddle images.
+const GHCRPrefix = "ghcr.io/donnype"
 
 // Client wraps the Docker Engine API client.
 type Client struct {
@@ -89,33 +95,38 @@ func (c *Client) Build(ctx context.Context, opts BuildOptions) error {
 type RunOptions struct {
 	Image string    // image tag
 	Env   []string  // environment variables (KEY=VALUE)
-	Stdin io.Reader // if non-nil, pipe this as stdin (non-interactive, no TTY)
+	Stdin io.Reader // if non-nil, pipe this as stdin (batch mode)
 }
 
 // Run creates, starts, and attaches to a container.
 // When opts.Stdin is nil, the container runs interactively with a TTY.
-// When opts.Stdin is set, input is piped without a TTY (batch mode).
+// When opts.Stdin is set, input is piped and output is read from logs after exit.
 func (c *Client) Run(ctx context.Context, opts RunOptions) error {
-	interactive := opts.Stdin == nil
+	if opts.Stdin != nil {
+		return c.runBatch(ctx, opts)
+	}
+	return c.runInteractive(ctx, opts)
+}
 
+// runInteractive runs a container with a TTY and bidirectional I/O.
+func (c *Client) runInteractive(ctx context.Context, opts RunOptions) error {
 	config := &container.Config{
 		Image:     opts.Image,
 		Env:       opts.Env,
-		Tty:       interactive,
+		Tty:       true,
 		OpenStdin: true,
 	}
 
-	hostConfig := &container.HostConfig{}
-	if interactive {
-		// Always set a valid console size — rlwrap refuses to start with 0x0.
-		fd := int(os.Stdin.Fd())
-		h, w := 24, 80
-		if term.IsTerminal(fd) {
-			if tw, th, err := term.GetSize(fd); err == nil {
-				h, w = th, tw
-			}
+	// Always set a valid console size — rlwrap refuses to start with 0x0.
+	fd := int(os.Stdin.Fd())
+	h, w := 24, 80
+	if term.IsTerminal(fd) {
+		if tw, th, err := term.GetSize(fd); err == nil {
+			h, w = th, tw
 		}
-		hostConfig.ConsoleSize = [2]uint{uint(h), uint(w)}
+	}
+	hostConfig := &container.HostConfig{
+		ConsoleSize: [2]uint{uint(h), uint(w)},
 	}
 
 	resp, err := c.cli.ContainerCreate(ctx, config, hostConfig, nil, nil, "")
@@ -140,38 +151,23 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) error {
 		return fmt.Errorf("starting container: %w", err)
 	}
 
-	// Set terminal to raw mode for interactive I/O.
-	if interactive {
-		fd := int(os.Stdin.Fd())
-		if term.IsTerminal(fd) {
-			oldState, err := term.MakeRaw(fd)
-			if err == nil {
-				defer term.Restore(fd, oldState)
-			}
+	// Set terminal to raw mode for proper interactive I/O.
+	if term.IsTerminal(fd) {
+		oldState, err := term.MakeRaw(fd)
+		if err == nil {
+			defer term.Restore(fd, oldState)
 		}
 	}
 
-	// container -> stdout (+ stderr in non-TTY mode).
+	// Bidirectional I/O: stdin -> container, container -> stdout.
 	outputDone := make(chan error, 1)
 	go func() {
-		if interactive {
-			// TTY mode: raw stream, stdout only.
-			_, err := io.Copy(os.Stdout, attachResp.Reader)
-			outputDone <- err
-		} else {
-			// Non-TTY mode: multiplexed stream, demux stdout/stderr.
-			_, err := stdcopy.StdCopy(os.Stdout, os.Stderr, attachResp.Reader)
-			outputDone <- err
-		}
+		_, err := io.Copy(os.Stdout, attachResp.Reader)
+		outputDone <- err
 	}()
 
-	// stdin -> container.
-	stdinSource := io.Reader(os.Stdin)
-	if opts.Stdin != nil {
-		stdinSource = opts.Stdin
-	}
 	go func() {
-		io.Copy(attachResp.Conn, stdinSource)
+		io.Copy(attachResp.Conn, os.Stdin)
 		attachResp.CloseWrite()
 	}()
 
@@ -184,6 +180,72 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) error {
 		}
 	case status := <-statusCh:
 		<-outputDone // drain remaining output
+		if status.StatusCode != 0 {
+			return fmt.Errorf("container exited with status %d", status.StatusCode)
+		}
+	}
+
+	return nil
+}
+
+// runBatch pipes stdin to the container and reads output from logs after exit.
+func (c *Client) runBatch(ctx context.Context, opts RunOptions) error {
+	config := &container.Config{
+		Image:        opts.Image,
+		Env:          opts.Env,
+		Tty:          false,
+		OpenStdin:    true,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+
+	resp, err := c.cli.ContainerCreate(ctx, config, &container.HostConfig{}, nil, nil, "")
+	if err != nil {
+		return fmt.Errorf("creating container: %w", err)
+	}
+	containerID := resp.ID
+	defer c.cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+
+	// Attach for stdin only — we'll read output from logs after exit.
+	attachResp, err := c.cli.ContainerAttach(ctx, containerID, container.AttachOptions{
+		Stream: true,
+		Stdin:  true,
+	})
+	if err != nil {
+		return fmt.Errorf("attaching to container: %w", err)
+	}
+
+	if err := c.cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+		attachResp.Close()
+		return fmt.Errorf("starting container: %w", err)
+	}
+
+	// Pipe SQL into the container's stdin.
+	io.Copy(attachResp.Conn, opts.Stdin)
+	attachResp.CloseWrite()
+	attachResp.Close()
+
+	// Wait for the container to exit.
+	statusCh, errCh := c.cli.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+	select {
+	case err := <-errCh:
+		if err != nil {
+			return fmt.Errorf("waiting for container: %w", err)
+		}
+	case status := <-statusCh:
+		// Read container logs (contains all stdout/stderr output).
+		logReader, logErr := c.cli.ContainerLogs(ctx, containerID, container.LogsOptions{
+			ShowStdout: true,
+			ShowStderr: true,
+		})
+		if logErr != nil {
+			return fmt.Errorf("reading container logs: %w", logErr)
+		}
+		defer logReader.Close()
+		// Non-TTY logs use the Docker multiplexed format.
+		stdcopy.StdCopy(os.Stdout, os.Stderr, logReader)
+
 		if status.StatusCode != 0 {
 			return fmt.Errorf("container exited with status %d", status.StatusCode)
 		}
@@ -231,6 +293,105 @@ func createTar(files fs.FS) (*bytes.Buffer, error) {
 	return buf, nil
 }
 
+// PullOptions configures a Docker image pull.
+type PullOptions struct {
+	RemoteRef string // e.g. "ghcr.io/donnype/puddle-python:1.4.4-3.12"
+	LocalTag  string // local tag to apply after pull (empty = skip retag)
+	Platform  string // e.g. "linux/amd64" (empty = host default)
+}
+
+// Pull pulls a remote image and optionally retags it to a local name.
+func (c *Client) Pull(ctx context.Context, opts PullOptions) error {
+	pullOpts := image.PullOptions{
+		Platform: opts.Platform,
+	}
+
+	reader, err := c.cli.ImagePull(ctx, opts.RemoteRef, pullOpts)
+	if err != nil {
+		return fmt.Errorf("pulling %s: %w", opts.RemoteRef, err)
+	}
+	defer reader.Close()
+
+	if err := streamPullOutput(reader); err != nil {
+		return err
+	}
+
+	if opts.LocalTag != "" {
+		if err := c.cli.ImageTag(ctx, opts.RemoteRef, opts.LocalTag); err != nil {
+			return fmt.Errorf("tagging %s as %s: %w", opts.RemoteRef, opts.LocalTag, err)
+		}
+	}
+	return nil
+}
+
+// ImageInfo holds basic info about a local Docker image.
+type ImageInfo struct {
+	ID   string
+	Tags []string
+}
+
+// ListImages returns all local images with tags matching "puddle-*".
+func (c *Client) ListImages(ctx context.Context) ([]ImageInfo, error) {
+	listOpts := image.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("reference", "puddle-*")),
+	}
+	images, err := c.cli.ImageList(ctx, listOpts)
+	if err != nil {
+		return nil, fmt.Errorf("listing images: %w", err)
+	}
+
+	// Also find GHCR-prefixed puddle images.
+	ghcrOpts := image.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("reference", GHCRPrefix+"/puddle-*")),
+	}
+	ghcrImages, err := c.cli.ImageList(ctx, ghcrOpts)
+	if err != nil {
+		return nil, fmt.Errorf("listing GHCR images: %w", err)
+	}
+
+	// Merge, deduplicating by ID.
+	seen := make(map[string]bool)
+	var result []ImageInfo
+	for _, img := range append(images, ghcrImages...) {
+		if seen[img.ID] {
+			// Merge tags into existing entry.
+			for i := range result {
+				if result[i].ID == img.ID {
+					result[i].Tags = append(result[i].Tags, img.RepoTags...)
+					break
+				}
+			}
+			continue
+		}
+		seen[img.ID] = true
+		result = append(result, ImageInfo{
+			ID:   img.ID,
+			Tags: img.RepoTags,
+		})
+	}
+	return result, nil
+}
+
+// RemoveImage removes a Docker image by ID.
+func (c *Client) RemoveImage(ctx context.Context, id string, force bool) error {
+	_, err := c.cli.ImageRemove(ctx, id, image.RemoveOptions{
+		Force:         force,
+		PruneChildren: true,
+	})
+	if err != nil {
+		return fmt.Errorf("removing image %s: %w", shortID(id), err)
+	}
+	return nil
+}
+
+func shortID(id string) string {
+	id = strings.TrimPrefix(id, "sha256:")
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
+}
+
 // streamBuildOutput reads Docker build JSON output and prints it.
 func streamBuildOutput(r io.Reader) error {
 	decoder := json.NewDecoder(r)
@@ -250,6 +411,29 @@ func streamBuildOutput(r io.Reader) error {
 		}
 		if msg.Stream != "" {
 			fmt.Print(msg.Stream)
+		}
+	}
+}
+
+// streamPullOutput reads Docker pull JSON output and streams progress to stderr.
+func streamPullOutput(r io.Reader) error {
+	decoder := json.NewDecoder(r)
+	for {
+		var msg struct {
+			Status string `json:"status"`
+			Error  string `json:"error"`
+		}
+		if err := decoder.Decode(&msg); err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+		if msg.Error != "" {
+			return fmt.Errorf("pull error: %s", msg.Error)
+		}
+		if msg.Status != "" {
+			fmt.Fprintln(os.Stderr, msg.Status)
 		}
 	}
 }

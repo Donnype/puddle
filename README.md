@@ -65,7 +65,7 @@ All languages support DuckDB versions from 1.2.x to 1.4.4, and both amd64 and ar
 
 ### `puddle run <language>`
 
-Build the Docker image and start an interactive SQL REPL.
+Pull a pre-built image from GHCR (or build locally) and start an interactive SQL REPL.
 
 ```
 puddle run node                       # Node.js with defaults
@@ -83,15 +83,27 @@ puddle run python -e FOO=bar         # Pass env vars to the container
 | `-a, --arch` | Target architecture: `amd64`, `arm64` |
 | `-e, --env` | Environment variable `KEY=VALUE` (repeatable) |
 | `-c, --command` | Execute a SQL command and exit (use `-` for stdin) |
+| `--build` | Force a local build, skip pulling from GHCR |
 | `--native` | Run without Docker, using the host's runtime |
 | `--binary` | Override the runtime binary path (native mode) |
 
 ### `puddle build <language>`
 
-Build the Docker image without starting the REPL. Accepts the same `-d`, `-r`, `-l`, `-a` flags.
+Pull a pre-built image from GHCR, or build locally. Accepts the same `-d`, `-r`, `-l`, `-a` flags.
+Use `--build` to force a local build and skip pulling from GHCR.
 
 ```
 puddle build rust -d 1.4.4
+puddle build python --build              # skip GHCR, build locally
+```
+
+### `puddle clean`
+
+Remove all locally cached puddle images (both local builds and GHCR pulls).
+
+```
+puddle clean                             # remove all puddle images
+puddle clean -f                          # force removal
 ```
 
 ### `puddle list`

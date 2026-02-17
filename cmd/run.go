@@ -48,25 +48,28 @@ Use --binary to override the default runtime binary in native mode.`,
 		if flagSQLCmd != "" && len(args) == 2 {
 			return fmt.Errorf("cannot use both -c and a SQL file argument")
 		}
+		// Append ";\n.quit\n" so the REPL exits cleanly without relying
+		// on stdin EOF (Docker attach CloseWrite is unreliable on macOS).
+		// The extra ";" is harmless if the SQL already ends with one.
 		if flagSQLCmd != "" {
 			if flagSQLCmd == "-" {
-				sqlReader = os.Stdin
+				sqlReader = io.MultiReader(os.Stdin, strings.NewReader(";\n.quit\n"))
 			} else {
-				sqlReader = strings.NewReader(flagSQLCmd + "\n")
+				sqlReader = strings.NewReader(flagSQLCmd + ";\n.quit\n")
 			}
 		} else if len(args) == 2 {
 			data, err := os.ReadFile(args[1])
 			if err != nil {
 				return fmt.Errorf("reading SQL file: %w", err)
 			}
-			sqlReader = strings.NewReader(string(data))
+			sqlReader = strings.NewReader(string(data) + ";\n.quit\n")
 		}
 
 		if flagNative {
 			return runNative(cmd.Context(), langName, flagBinary, sqlReader)
 		}
 
-		tag, err := buildImage(cmd.Context(), langName)
+		tag, err := ensureImage(cmd.Context(), langName)
 		if err != nil {
 			return err
 		}
