@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Build
+        run: go build -o puddle .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: puddle
+          path: puddle
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Base: every language × 3 DuckDB versions (default runtimes).
+        lang: [python, java, node, go, rust, php, ruby]
+        duckdb: ["1.2.0", "1.3.0", "1.4.4"]
+        include:
+          # ── Python runtimes ──
+          - { lang: python, duckdb: "1.4.4", runtime: "3.10" }
+          - { lang: python, duckdb: "1.4.4", runtime: "3.12" }
+          - { lang: python, duckdb: "1.4.4", runtime: "3.13" }
+          # ── Java runtimes ──
+          - { lang: java, duckdb: "1.4.4", runtime: "17" }
+          - { lang: java, duckdb: "1.4.4", runtime: "21" }
+          # ── Node runtimes ──
+          - { lang: node, duckdb: "1.4.4", runtime: "18" }
+          - { lang: node, duckdb: "1.4.4", runtime: "20" }
+          - { lang: node, duckdb: "1.4.4", runtime: "22" }
+          # ── Go runtimes ──
+          - { lang: go, duckdb: "1.4.4", runtime: "1.22" }
+          - { lang: go, duckdb: "1.4.4", runtime: "1.24" }
+          # ── PHP runtimes ──
+          - { lang: php, duckdb: "1.4.4", runtime: "8.2" }
+          - { lang: php, duckdb: "1.4.4", runtime: "8.3" }
+          # ── Ruby runtimes ──
+          - { lang: ruby, duckdb: "1.4.4", runtime: "3.2" }
+          - { lang: ruby, duckdb: "1.4.4", runtime: "3.3" }
+    name: ${{ matrix.lang }} / duckdb ${{ matrix.duckdb }}${{ matrix.runtime && format(' / runtime {0}', matrix.runtime) || '' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: puddle
+      - run: chmod +x puddle
+      - name: "SELECT 1"
+        run: |
+          ARGS="-d ${{ matrix.duckdb }}"
+          if [ -n "${{ matrix.runtime }}" ]; then
+            ARGS="$ARGS -r ${{ matrix.runtime }}"
+          fi
+          ./puddle run ${{ matrix.lang }} $ARGS -c "SELECT 1 AS ok;" > /tmp/output.txt
+          cat /tmp/output.txt
+          grep -q "ok" /tmp/output.txt

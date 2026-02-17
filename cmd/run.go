@@ -99,8 +99,8 @@ func init() {
 	addBuildFlags(runCmd)
 	runCmd.Flags().BoolVar(&flagREPL, "repl", true, "start the SQL REPL (default)")
 	runCmd.Flags().MarkHidden("repl")
-	runCmd.Flags().BoolVar(&flagNative, "native", false, "run without Docker using the host's runtime")
-	runCmd.Flags().StringVar(&flagBinary, "binary", "", "path to the language runtime binary (native mode)")
+	runCmd.Flags().BoolVarP(&flagNative, "native", "n", false, "run without Docker using the host's runtime")
+	runCmd.Flags().StringVarP(&flagBinary, "binary", "b", "", "path to the language runtime binary (native mode)")
 	runCmd.Flags().StringArrayVarP(&flagEnv, "env", "e", nil, "set environment variables (KEY=VALUE), can be repeated")
 	runCmd.Flags().StringVarP(&flagSQLCmd, "command", "c", "", "execute a SQL command and exit (use - to read from stdin)")
 }
