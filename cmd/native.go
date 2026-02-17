@@ -16,7 +16,8 @@ import (
 )
 
 // runNative extracts the embedded REPL files and runs them with the host's runtime.
-func runNative(ctx context.Context, langName, binary string) error {
+// When sqlReader is non-nil, SQL is piped in without rlwrap (batch mode).
+func runNative(ctx context.Context, langName, binary string, sqlReader io.Reader) error {
 	l, err := lang.Get(langName)
 	if err != nil {
 		return err
@@ -50,21 +51,29 @@ func runNative(ctx context.Context, langName, binary string) error {
 		return err
 	}
 
-	// Prepend rlwrap if available for readline support.
-	if path, lookErr := exec.LookPath("rlwrap"); lookErr == nil {
-		cmdArgs = append([]string{path}, cmdArgs...)
+	// Only use rlwrap in interactive mode.
+	if sqlReader == nil {
+		if path, lookErr := exec.LookPath("rlwrap"); lookErr == nil {
+			cmdArgs = append([]string{path}, cmdArgs...)
+		}
 	}
 
 	cmd := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
 	cmd.Dir = tmpDir
-	cmd.Stdin = os.Stdin
+	if sqlReader != nil {
+		cmd.Stdin = sqlReader
+	} else {
+		cmd.Stdin = os.Stdin
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if len(flagEnv) > 0 {
 		cmd.Env = append(os.Environ(), flagEnv...)
 	}
 
-	fmt.Fprintf(os.Stderr, "\nStarting REPL (native)...\n")
+	if sqlReader == nil {
+		fmt.Fprintf(os.Stderr, "\nStarting REPL (native)...\n")
+	}
 	return cmd.Run()
 }
 

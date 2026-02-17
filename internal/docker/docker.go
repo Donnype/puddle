@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"golang.org/x/term"
 )
 
@@ -86,30 +87,35 @@ func (c *Client) Build(ctx context.Context, opts BuildOptions) error {
 
 // RunOptions configures a Docker container run.
 type RunOptions struct {
-	Image string   // image tag
-	Env   []string // environment variables (KEY=VALUE)
+	Image string    // image tag
+	Env   []string  // environment variables (KEY=VALUE)
+	Stdin io.Reader // if non-nil, pipe this as stdin (non-interactive, no TTY)
 }
 
-// Run creates, starts, and attaches to a container interactively.
+// Run creates, starts, and attaches to a container.
+// When opts.Stdin is nil, the container runs interactively with a TTY.
+// When opts.Stdin is set, input is piped without a TTY (batch mode).
 func (c *Client) Run(ctx context.Context, opts RunOptions) error {
+	interactive := opts.Stdin == nil
+
 	config := &container.Config{
 		Image:     opts.Image,
 		Env:       opts.Env,
-		Tty:       true,
+		Tty:       interactive,
 		OpenStdin: true,
 	}
 
-	// Always set a valid console size — rlwrap refuses to start with 0x0.
-	// Use host terminal dimensions when available, otherwise a safe default.
-	fd := int(os.Stdin.Fd())
-	h, w := 24, 80
-	if term.IsTerminal(fd) {
-		if tw, th, err := term.GetSize(fd); err == nil {
-			h, w = th, tw
+	hostConfig := &container.HostConfig{}
+	if interactive {
+		// Always set a valid console size — rlwrap refuses to start with 0x0.
+		fd := int(os.Stdin.Fd())
+		h, w := 24, 80
+		if term.IsTerminal(fd) {
+			if tw, th, err := term.GetSize(fd); err == nil {
+				h, w = th, tw
+			}
 		}
-	}
-	hostConfig := &container.HostConfig{
-		ConsoleSize: [2]uint{uint(h), uint(w)},
+		hostConfig.ConsoleSize = [2]uint{uint(h), uint(w)}
 	}
 
 	resp, err := c.cli.ContainerCreate(ctx, config, hostConfig, nil, nil, "")
@@ -134,23 +140,38 @@ func (c *Client) Run(ctx context.Context, opts RunOptions) error {
 		return fmt.Errorf("starting container: %w", err)
 	}
 
-	// Set terminal to raw mode for proper interactive I/O.
-	if term.IsTerminal(fd) {
-		oldState, err := term.MakeRaw(fd)
-		if err == nil {
-			defer term.Restore(fd, oldState)
+	// Set terminal to raw mode for interactive I/O.
+	if interactive {
+		fd := int(os.Stdin.Fd())
+		if term.IsTerminal(fd) {
+			oldState, err := term.MakeRaw(fd)
+			if err == nil {
+				defer term.Restore(fd, oldState)
+			}
 		}
 	}
 
-	// Bidirectional I/O: stdin -> container, container -> stdout.
+	// container -> stdout (+ stderr in non-TTY mode).
 	outputDone := make(chan error, 1)
 	go func() {
-		_, err := io.Copy(os.Stdout, attachResp.Reader)
-		outputDone <- err
+		if interactive {
+			// TTY mode: raw stream, stdout only.
+			_, err := io.Copy(os.Stdout, attachResp.Reader)
+			outputDone <- err
+		} else {
+			// Non-TTY mode: multiplexed stream, demux stdout/stderr.
+			_, err := stdcopy.StdCopy(os.Stdout, os.Stderr, attachResp.Reader)
+			outputDone <- err
+		}
 	}()
 
+	// stdin -> container.
+	stdinSource := io.Reader(os.Stdin)
+	if opts.Stdin != nil {
+		stdinSource = opts.Stdin
+	}
 	go func() {
-		io.Copy(attachResp.Conn, os.Stdin)
+		io.Copy(attachResp.Conn, stdinSource)
 		attachResp.CloseWrite()
 	}()
 

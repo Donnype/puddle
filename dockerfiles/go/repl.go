@@ -23,26 +23,35 @@ func main() {
 	}
 	defer db.Close()
 
-	var version string
-	if err := db.QueryRow("SELECT version()").Scan(&version); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to get version: %v\n", err)
-		os.Exit(1)
+	fi, _ := os.Stdin.Stat()
+	interactive := fi.Mode()&os.ModeCharDevice != 0
+
+	if interactive {
+		var version string
+		if err := db.QueryRow("SELECT version()").Scan(&version); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get version: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("puddle DuckDB %s (Go)\n", version)
+		fmt.Println(`Enter ".quit" to exit.`)
 	}
-	fmt.Printf("puddle DuckDB %s (Go)\n", version)
-	fmt.Println(`Enter ".quit" to exit.`)
 
 	scanner := bufio.NewScanner(os.Stdin)
 	var buf []string
 
 	for {
-		if len(buf) == 0 {
-			fmt.Print("Go:D ")
-		} else {
-			fmt.Print("Go:.. ")
+		if interactive {
+			if len(buf) == 0 {
+				fmt.Print("Go:D ")
+			} else {
+				fmt.Print("Go:.. ")
+			}
 		}
 
 		if !scanner.Scan() {
-			fmt.Println()
+			if interactive {
+				fmt.Println()
+			}
 			break
 		}
 
@@ -61,33 +70,45 @@ func main() {
 		}
 		buf = nil
 
-		rows, err := db.Query(query)
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			continue
-		}
+		executeAndPrint(db, query)
+	}
 
-		cols, _ := rows.Columns()
-		if len(cols) > 0 {
-			fmt.Println(strings.Join(cols, "\t"))
-			values := make([]interface{}, len(cols))
-			ptrs := make([]interface{}, len(cols))
-			for i := range values {
-				ptrs[i] = &values[i]
-			}
-			for rows.Next() {
-				rows.Scan(ptrs...)
-				strs := make([]string, len(cols))
-				for i, v := range values {
-					if v == nil {
-						strs[i] = "NULL"
-					} else {
-						strs[i] = fmt.Sprintf("%v", v)
-					}
-				}
-				fmt.Println(strings.Join(strs, "\t"))
-			}
+	// Execute any remaining buffered SQL on EOF.
+	if len(buf) > 0 {
+		query := strings.TrimSpace(strings.Join(buf, "\n"))
+		if query != "" {
+			executeAndPrint(db, query)
 		}
-		rows.Close()
+	}
+}
+
+func executeAndPrint(db *sql.DB, query string) {
+	rows, err := db.Query(query)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	defer rows.Close()
+
+	cols, _ := rows.Columns()
+	if len(cols) > 0 {
+		fmt.Println(strings.Join(cols, "\t"))
+		values := make([]interface{}, len(cols))
+		ptrs := make([]interface{}, len(cols))
+		for i := range values {
+			ptrs[i] = &values[i]
+		}
+		for rows.Next() {
+			rows.Scan(ptrs...)
+			strs := make([]string, len(cols))
+			for i, v := range values {
+				if v == nil {
+					strs[i] = "NULL"
+				} else {
+					strs[i] = fmt.Sprintf("%v", v)
+				}
+			}
+			fmt.Println(strings.Join(strs, "\t"))
+		}
 	}
 }

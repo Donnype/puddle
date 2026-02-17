@@ -5,19 +5,24 @@ use Saturio\DuckDB\DuckDB;
 
 $path = $argv[1] ?? ':memory:';
 $db = DuckDB::create($path);
+$interactive = stream_isatty(STDIN);
 
-echo "puddle DuckDB (PHP)\n";
-$db->query("SELECT version() AS version")->print();
-echo 'Enter ".quit" to exit.' . "\n";
+if ($interactive) {
+    echo "puddle DuckDB (PHP)\n";
+    $db->query("SELECT version() AS version")->print();
+    echo 'Enter ".quit" to exit.' . "\n";
+}
 
 $buf = [];
 while (true) {
-    $prompt = empty($buf) ? "PHP:D " : "PHP:.. ";
-    echo $prompt;
+    if ($interactive) {
+        $prompt = empty($buf) ? "PHP:D " : "PHP:.. ";
+        echo $prompt;
+    }
 
     $line = fgets(STDIN);
     if ($line === false) {
-        echo "\n";
+        if ($interactive) echo "\n";
         break;
     }
 
@@ -37,5 +42,20 @@ while (true) {
         }
     } catch (\Throwable $e) {
         echo "Error: " . $e->getMessage() . "\n";
+    }
+}
+
+// Execute any remaining buffered SQL on EOF.
+if (!empty($buf)) {
+    $sql = trim(implode("\n", $buf));
+    if ($sql !== '') {
+        try {
+            $result = $db->query($sql);
+            if ($result) {
+                $result->print();
+            }
+        } catch (\Throwable $e) {
+            echo "Error: " . $e->getMessage() . "\n";
+        }
     }
 }

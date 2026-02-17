@@ -82,6 +82,7 @@ puddle run python -e FOO=bar         # Pass env vars to the container
 | `-l, --lib-version` | Language library version (e.g. PHP duckdb lib) |
 | `-a, --arch` | Target architecture: `amd64`, `arm64` |
 | `-e, --env` | Environment variable `KEY=VALUE` (repeatable) |
+| `-c, --command` | Execute a SQL command and exit (use `-` for stdin) |
 | `--native` | Run without Docker, using the host's runtime |
 | `--binary` | Override the runtime binary path (native mode) |
 
@@ -96,6 +97,26 @@ puddle build rust -d 1.4.4
 ### `puddle list`
 
 List all available language bindings with their defaults and supported version ranges.
+
+## Non-interactive mode
+
+Run SQL without entering the interactive REPL:
+
+```
+# Execute a SQL command directly
+puddle run python -c "SELECT 42 AS answer;"
+
+# Read SQL from stdin
+echo "SELECT version();" | puddle run python -c -
+
+# Run a SQL file
+puddle run python query.sql
+
+# Combine with other flags
+puddle run java -d 1.3.0 -c "SELECT version();"
+```
+
+In non-interactive mode, the REPL suppresses the banner and prompts, printing only query results. SQL without a trailing `;` is executed on EOF.
 
 ## Native mode
 

@@ -4,23 +4,26 @@ import { stdin, stdout } from 'process';
 
 const instance = await DuckDBInstance.create();
 const conn = await instance.connect();
+const interactive = stdin.isTTY === true;
 
-const vr = await conn.runAndReadAll("SELECT version()");
-const version = vr.getRows()[0][0];
-console.log(`puddle DuckDB ${version} (Node.js)`);
-console.log('Enter ".quit" to exit.');
+if (interactive) {
+    const vr = await conn.runAndReadAll("SELECT version()");
+    const version = vr.getRows()[0][0];
+    console.log(`puddle DuckDB ${version} (Node.js)`);
+    console.log('Enter ".quit" to exit.');
+}
 
-const rl = createInterface({ input: stdin, output: stdout });
+const rl = createInterface({ input: stdin, output: interactive ? stdout : undefined });
 
 let buf = [];
 try {
     while (true) {
-        const prompt = buf.length === 0 ? 'Node:D ' : 'Node:.. ';
+        const prompt = interactive ? (buf.length === 0 ? 'Node:D ' : 'Node:.. ') : '';
         let line;
         try {
             line = await rl.question(prompt);
         } catch {
-            console.log();
+            if (interactive) console.log();
             break;
         }
 
@@ -44,6 +47,26 @@ try {
             }
         } catch (e) {
             console.log(`Error: ${e.message}`);
+        }
+    }
+
+    // Execute any remaining buffered SQL on EOF.
+    if (buf.length > 0) {
+        const sql = buf.join('\n').trim();
+        if (sql) {
+            try {
+                const reader = await conn.runAndReadAll(sql);
+                const cols = reader.columnNames();
+                const rows = reader.getRows();
+                if (cols.length > 0 && rows.length > 0) {
+                    console.log(cols.join('\t'));
+                    for (const row of rows) {
+                        console.log(row.map(v => v === null || v === undefined ? 'NULL' : String(v)).join('\t'));
+                    }
+                }
+            } catch (e) {
+                console.log(`Error: ${e.message}`);
+            }
         }
     }
 } finally {
