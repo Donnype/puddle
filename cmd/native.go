@@ -229,8 +229,19 @@ func setupGo(ctx context.Context, dir, binary, duckdbVer string) ([]string, erro
 	if err != nil {
 		return nil, fmt.Errorf("reading go.mod.tmpl: %w", err)
 	}
+	// Detect the Go version from the binary for the go directive.
+	goVerOut, err := exec.CommandContext(ctx, binary, "env", "GOVERSION").Output()
+	if err != nil {
+		return nil, fmt.Errorf("detecting go version: %w", err)
+	}
+	goVerStr := strings.TrimPrefix(strings.TrimSpace(string(goVerOut)), "go") // "1.22.12"
+	if parts := strings.SplitN(goVerStr, ".", 3); len(parts) >= 2 {
+		goVerStr = parts[0] + "." + parts[1] // "1.22"
+	}
+
 	modContent := strings.ReplaceAll(string(data), "MODULE_PATH_PLACEHOLDER", modPath)
 	modContent = strings.ReplaceAll(modContent, "SDK_VERSION_PLACEHOLDER", sdkVer)
+	modContent = strings.ReplaceAll(modContent, "GO_VERSION_PLACEHOLDER", goVerStr)
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0644); err != nil {
 		return nil, fmt.Errorf("writing go.mod: %w", err)
 	}
@@ -297,6 +308,14 @@ func setupPHP(ctx context.Context, dir, binary, duckdbVer string) ([]string, err
 	libVer := flagLibVersion
 	if libVer == "" {
 		libVer = "2.0.3"
+	}
+
+	// satur.io/duckdb v2.x requires PHP >= 8.3. Downgrade to v1.x for older PHP.
+	if strings.HasPrefix(libVer, "2.") {
+		out, err := exec.CommandContext(ctx, binary, "-r", `echo version_compare(PHP_VERSION,"8.3","<")?"old":"ok";`).Output()
+		if err == nil && strings.TrimSpace(string(out)) == "old" {
+			libVer = "1.2.1"
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "Setting up PHP project...\n")

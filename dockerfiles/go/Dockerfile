@@ -36,6 +36,8 @@ RUN case "$DUCKDB_VERSION" in \
     esac \
     && sed -i "s|MODULE_PATH_PLACEHOLDER|${MODULE_PATH}|" go.mod repl.go \
     && sed -i "s|SDK_VERSION_PLACEHOLDER|${SDK_VERSION}|" go.mod \
+    && GO_MINOR=$(go version | sed 's|.*go\([0-9]*\.[0-9]*\).*|\1|') \
+    && sed -i "s|GO_VERSION_PLACEHOLDER|${GO_MINOR}|" go.mod \
     && go mod tidy
 
 RUN CGO_ENABLED=1 go build -o /repl .

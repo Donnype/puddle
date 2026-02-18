@@ -22,6 +22,9 @@ RUN ARCH=$(dpkg --print-architecture) && \
     if [[ $DUCKDB_VERSION == 1.2.* ]] && [[ $DUCKDB_PHP_VERSION == 2.* ]]; then \
         DUCKDB_PHP_VERSION="1.2.1"; \
     fi && \
+    if php -r 'exit(version_compare(PHP_VERSION,"8.3","<")?0:1);' && [[ $DUCKDB_PHP_VERSION == 2.* ]]; then \
+        DUCKDB_PHP_VERSION="1.2.1"; \
+    fi && \
     composer init --name=puddle/repl --no-interaction && \
     if [[ $DUCKDB_PHP_VERSION == 2.* ]]; then \
         (curl -sfL "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/libduckdb-linux-${ARCH}.zip" -o /tmp/duckdb.zip \
