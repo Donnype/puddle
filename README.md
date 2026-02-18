@@ -1,6 +1,6 @@
 # puddle
 
-A CLI tool that spins up a DuckDB SQL REPL with any language binding via Docker. Ships self-contained Dockerfiles for 7 languages, each with an interactive SQL prompt that talks to DuckDB through the language's native binding.
+A CLI tool that spins up DuckDB language containers via Docker. Ships self-contained Dockerfiles for 7 languages, each with DuckDB pre-installed and an interactive SQL REPL.
 
 ## Requirements
 
@@ -16,8 +16,11 @@ go build -o puddle .
 ## Quick start
 
 ```
-# Start a Python-backed DuckDB REPL
+# Start a bash shell with DuckDB + Python, PWD mounted at /work
 puddle run python
+
+# Start the DuckDB SQL REPL instead
+puddle run python --repl
 
 # Use a specific DuckDB version
 puddle run python -d 1.3.0
@@ -26,22 +29,7 @@ puddle run python -d 1.3.0
 puddle run python -r 3.11
 
 # Pass environment variables into the container
-puddle run python -e MOTHERDUCK_TOKEN=your_token -e MY_VAR=value
-```
-
-Inside the REPL:
-
-```
-puddle DuckDB v1.4.4 (Python)
-Enter ".quit" to exit.
-Python:D SELECT 42 AS answer;
-┌────────┐
-│ answer │
-│ int32  │
-├────────┤
-│     42 │
-└────────┘
-Python:D .quit
+puddle run python -e MY_VAR=value
 ```
 
 ## Supported languages
@@ -65,18 +53,19 @@ All languages support DuckDB versions from 1.2.x to 1.4.4, and both amd64 and ar
 
 ### `puddle run <language>`
 
-Pull a pre-built image from GHCR (or build locally) and start an interactive SQL REPL.
+Pull a pre-built image from GHCR (or build locally) and start a bash shell with the current directory mounted at `/work`. Use `--repl` to start the DuckDB SQL REPL instead.
 
 ```
-puddle run node                       # Node.js with defaults
-puddle run java -d 1.3.0 -r 17       # Java 17 with DuckDB 1.3.0
-puddle run php -l 2.0.3              # PHP with specific library version
-puddle run ruby -a arm64             # Force arm64 architecture
-puddle run python -e FOO=bar         # Pass env vars to the container
+puddle run python                        # bash shell with PWD at /work
+puddle run python --repl                 # DuckDB SQL REPL
+puddle run java -d 1.3.0 -r 17          # Java 17 with DuckDB 1.3.0
+puddle run python -e FOO=bar             # pass env vars to the container
+puddle run python -c "SELECT 42;"        # run SQL and exit
 ```
 
 | Flag | Description |
 |------|-------------|
+| `--repl` | Start the DuckDB SQL REPL instead of a shell |
 | `-d, --duckdb-version` | DuckDB version (default: per-language) |
 | `-r, --runtime-version` | Language runtime version (e.g. Python 3.11) |
 | `-l, --lib-version` | Language library version (e.g. PHP duckdb lib) |
@@ -86,6 +75,15 @@ puddle run python -e FOO=bar         # Pass env vars to the container
 | `--build` | Force a local build, skip pulling from GHCR |
 | `--native` | Run without Docker, using the host's runtime |
 | `--binary` | Override the runtime binary path (native mode) |
+
+### `puddle shell <language>`
+
+Shorthand for `puddle run <language>` — starts a bash shell with PWD mounted at `/work`.
+
+```
+puddle shell node
+puddle shell ruby -d 1.3.0
+```
 
 ### `puddle build <language>`
 
@@ -104,6 +102,39 @@ Remove all locally cached puddle images (both local builds and GHCR pulls).
 ```
 puddle clean                             # remove all puddle images
 puddle clean -f                          # force removal
+```
+
+### `puddle use <language>`
+
+Set default language and versions for the current shell session via environment variables. Wrap in `eval` to apply:
+
+```
+eval "$(puddle use python -d 1.3.0 -r 3.11)"
+```
+
+Once set, the language argument becomes optional for `run`, `shell`, and `build`:
+
+```
+puddle run                               # uses PUDDLE_LANG, PUDDLE_DUCKDB_VERSION, etc.
+puddle run -c "SELECT version();"        # same, SQL command mode
+puddle run java -d 1.4.4                 # CLI flags override env vars
+```
+
+Clear with:
+
+```
+eval "$(puddle use --clear)"
+```
+
+### `puddle show`
+
+Display the current puddle environment (set by `puddle use`):
+
+```
+$ puddle show
+Language:        python (Python)
+DuckDB version:  1.3.0
+Runtime version: 3.11
 ```
 
 ### `puddle list`

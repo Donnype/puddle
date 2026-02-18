@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -20,13 +21,14 @@ var (
 )
 
 var runCmd = &cobra.Command{
-	Use:   "run <language> [sql_file]",
-	Short: "Build and run a DuckDB SQL REPL for a language binding",
-	Long: `Build a Docker image for the specified language binding and start
-an interactive DuckDB SQL REPL inside it.
+	Use:   "run [language] [sql_file]",
+	Short: "Start a shell (default) or DuckDB REPL for a language binding",
+	Long: `Start a container for the specified language binding.
 
-The REPL speaks SQL through the language's native DuckDB binding.
-Use .quit or .exit to leave the REPL.
+By default, opens a bash shell with the current directory mounted at /work.
+Use --repl to start the interactive DuckDB SQL REPL instead.
+
+The language can be omitted if PUDDLE_LANG is set (see "puddle use").
 
 Use -c to execute a SQL command and exit:
   puddle run python -c "SELECT 42;"
@@ -39,13 +41,21 @@ Pass a SQL file as a second argument:
 
 Use --native to run without Docker, using the host's language runtime.
 Use --binary to override the default runtime binary in native mode.`,
-	Args: cobra.RangeArgs(1, 2),
+	Args: cobra.RangeArgs(0, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		langName := args[0]
+		langName, err := resolveLang(args)
+		if err != nil {
+			return err
+		}
+		// Shift args past the language name for SQL file detection.
+		sqlArgs := args
+		if len(args) > 0 {
+			sqlArgs = args[1:]
+		}
 
 		// Determine SQL input source.
 		var sqlReader io.Reader
-		if flagSQLCmd != "" && len(args) == 2 {
+		if flagSQLCmd != "" && len(sqlArgs) > 0 {
 			return fmt.Errorf("cannot use both -c and a SQL file argument")
 		}
 		// Append ";\n.quit\n" so the REPL exits cleanly without relying
@@ -57,8 +67,8 @@ Use --binary to override the default runtime binary in native mode.`,
 			} else {
 				sqlReader = strings.NewReader(flagSQLCmd + ";\n.quit\n")
 			}
-		} else if len(args) == 2 {
-			data, err := os.ReadFile(args[1])
+		} else if len(sqlArgs) > 0 {
+			data, err := os.ReadFile(sqlArgs[0])
 			if err != nil {
 				return fmt.Errorf("reading SQL file: %w", err)
 			}
@@ -69,41 +79,82 @@ Use --binary to override the default runtime binary in native mode.`,
 			return runNative(cmd.Context(), langName, flagBinary, sqlReader)
 		}
 
-		tag, err := ensureImage(cmd.Context(), langName)
-		if err != nil {
-			return err
+		// SQL mode (batch or interactive REPL).
+		if sqlReader != nil || flagREPL {
+			return runREPL(cmd.Context(), langName, sqlReader)
 		}
 
-		cli, err := docker.New()
-		if err != nil {
-			return err
-		}
-		defer cli.Close()
-
-		// Forward MOTHERDUCK_TOKEN if set, plus any user-supplied env vars.
-		var env []string
-		if token := os.Getenv("MOTHERDUCK_TOKEN"); token != "" {
-			env = append(env, "MOTHERDUCK_TOKEN="+token)
-		}
-		env = append(env, flagEnv...)
-
-		if sqlReader == nil {
-			fmt.Fprintf(os.Stderr, "\nStarting REPL...\n")
-		}
-		return cli.Run(cmd.Context(), docker.RunOptions{
-			Image: tag,
-			Env:   env,
-			Stdin: sqlReader,
-		})
+		// Default: shell mode.
+		return runShellMode(cmd.Context(), langName)
 	},
 }
 
 func init() {
 	addBuildFlags(runCmd)
-	runCmd.Flags().BoolVar(&flagREPL, "repl", true, "start the SQL REPL (default)")
-	runCmd.Flags().MarkHidden("repl")
+	runCmd.Flags().BoolVar(&flagREPL, "repl", false, "start the DuckDB SQL REPL instead of a shell")
 	runCmd.Flags().BoolVarP(&flagNative, "native", "n", false, "run without Docker using the host's runtime")
 	runCmd.Flags().StringVarP(&flagBinary, "binary", "b", "", "path to the language runtime binary (native mode)")
 	runCmd.Flags().StringArrayVarP(&flagEnv, "env", "e", nil, "set environment variables (KEY=VALUE), can be repeated")
 	runCmd.Flags().StringVarP(&flagSQLCmd, "command", "c", "", "execute a SQL command and exit (use - to read from stdin)")
+}
+
+// defaultEnv returns MOTHERDUCK_TOKEN (if set) plus any user-supplied -e vars.
+func defaultEnv() []string {
+	var env []string
+	if token := os.Getenv("MOTHERDUCK_TOKEN"); token != "" {
+		env = append(env, "MOTHERDUCK_TOKEN="+token)
+	}
+	env = append(env, flagEnv...)
+	return env
+}
+
+// runREPL starts the DuckDB SQL REPL (or runs a SQL command/file).
+func runREPL(ctx context.Context, langName string, sqlReader io.Reader) error {
+	tag, err := ensureImage(ctx, langName)
+	if err != nil {
+		return err
+	}
+
+	cli, err := docker.New()
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+
+	if sqlReader == nil {
+		fmt.Fprintf(os.Stderr, "\nStarting REPL...\n")
+	}
+	return cli.Run(ctx, docker.RunOptions{
+		Image: tag,
+		Env:   defaultEnv(),
+		Stdin: sqlReader,
+	})
+}
+
+// runShellMode starts a bash shell with PWD mounted at /work.
+func runShellMode(ctx context.Context, langName string) error {
+	tag, err := ensureImage(ctx, langName)
+	if err != nil {
+		return err
+	}
+
+	cli, err := docker.New()
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+
+	pwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getting working directory: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "\nStarting shell (%s mounted at /work)...\n", pwd)
+	return cli.Run(ctx, docker.RunOptions{
+		Image:      tag,
+		Env:        defaultEnv(),
+		Cmd:        []string{"/bin/bash"},
+		Binds:      []string{pwd + ":/work"},
+		WorkingDir: "/work",
+	})
 }

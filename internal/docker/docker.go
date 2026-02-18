@@ -93,9 +93,12 @@ func (c *Client) Build(ctx context.Context, opts BuildOptions) error {
 
 // RunOptions configures a Docker container run.
 type RunOptions struct {
-	Image string    // image tag
-	Env   []string  // environment variables (KEY=VALUE)
-	Stdin io.Reader // if non-nil, pipe this as stdin (batch mode)
+	Image      string    // image tag
+	Env        []string  // environment variables (KEY=VALUE)
+	Stdin      io.Reader // if non-nil, pipe this as stdin (batch mode)
+	Binds      []string  // volume mounts, e.g. ["/host/path:/container/path"]
+	WorkingDir string    // container working directory
+	Cmd        []string  // override CMD (e.g. ["/bin/bash"])
 }
 
 // Run creates, starts, and attaches to a container.
@@ -116,6 +119,12 @@ func (c *Client) runInteractive(ctx context.Context, opts RunOptions) error {
 		Tty:       true,
 		OpenStdin: true,
 	}
+	if len(opts.Cmd) > 0 {
+		config.Cmd = opts.Cmd
+	}
+	if opts.WorkingDir != "" {
+		config.WorkingDir = opts.WorkingDir
+	}
 
 	// Always set a valid console size — rlwrap refuses to start with 0x0.
 	fd := int(os.Stdin.Fd())
@@ -127,6 +136,7 @@ func (c *Client) runInteractive(ctx context.Context, opts RunOptions) error {
 	}
 	hostConfig := &container.HostConfig{
 		ConsoleSize: [2]uint{uint(h), uint(w)},
+		Binds:       opts.Binds,
 	}
 
 	resp, err := c.cli.ContainerCreate(ctx, config, hostConfig, nil, nil, "")
@@ -199,8 +209,14 @@ func (c *Client) runBatch(ctx context.Context, opts RunOptions) error {
 		AttachStdout: true,
 		AttachStderr: true,
 	}
+	if len(opts.Cmd) > 0 {
+		config.Cmd = opts.Cmd
+	}
+	if opts.WorkingDir != "" {
+		config.WorkingDir = opts.WorkingDir
+	}
 
-	resp, err := c.cli.ContainerCreate(ctx, config, &container.HostConfig{}, nil, nil, "")
+	resp, err := c.cli.ContainerCreate(ctx, config, &container.HostConfig{Binds: opts.Binds}, nil, nil, "")
 	if err != nil {
 		return fmt.Errorf("creating container: %w", err)
 	}
@@ -322,6 +338,12 @@ func (c *Client) Pull(ctx context.Context, opts PullOptions) error {
 		}
 	}
 	return nil
+}
+
+// ImageExists checks if a local image with the given tag exists.
+func (c *Client) ImageExists(ctx context.Context, tag string) bool {
+	_, _, err := c.cli.ImageInspectWithRaw(ctx, tag)
+	return err == nil
 }
 
 // ImageInfo holds basic info about a local Docker image.

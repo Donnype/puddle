@@ -29,4 +29,7 @@ func init() {
 	rootCmd.AddCommand(buildCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(cleanCmd)
+	rootCmd.AddCommand(shellCmd)
+	rootCmd.AddCommand(useCmd)
+	rootCmd.AddCommand(showCmd)
 }

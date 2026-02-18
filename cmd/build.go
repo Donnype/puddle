@@ -22,10 +22,21 @@ var (
 )
 
 var buildCmd = &cobra.Command{
-	Use:   "build <language>",
+	Use:   "build [language]",
 	Short: "Build a Docker image for a language binding",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runBuild,
+	Args:  cobra.RangeArgs(0, 1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		langName, err := resolveLang(args)
+		if err != nil {
+			return err
+		}
+		tag, err := ensureImage(cmd.Context(), langName)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "\nImage ready: %s\n", tag)
+		return nil
+	},
 }
 
 func init() {
@@ -40,13 +51,45 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&flagBuild, "build", false, "force a local build, skip pulling from GHCR")
 }
 
-func runBuild(cmd *cobra.Command, args []string) error {
-	tag, err := ensureImage(cmd.Context(), args[0])
-	if err != nil {
-		return err
+// resolveLang returns the language name from args or PUDDLE_LANG env var.
+func resolveLang(args []string) (string, error) {
+	if len(args) > 0 {
+		return args[0], nil
 	}
-	fmt.Fprintf(os.Stderr, "\nImage ready: %s\n", tag)
-	return nil
+	if envLang := os.Getenv("PUDDLE_LANG"); envLang != "" {
+		return envLang, nil
+	}
+	return "", fmt.Errorf("no language specified (set one with: eval \"$(puddle use <language>)\")")
+}
+
+// resolveVersions returns the DuckDB, runtime, and lib versions using:
+// CLI flags > PUDDLE_* env vars > language registry defaults.
+func resolveVersions(l lang.Language) (duckdbVer, rtVer, libVer string) {
+	duckdbVer = flagDuckDBVersion
+	if duckdbVer == "" {
+		duckdbVer = os.Getenv("PUDDLE_DUCKDB_VERSION")
+	}
+	if duckdbVer == "" {
+		duckdbVer = l.DefaultDuckDB
+	}
+
+	rtVer = flagRuntimeVersion
+	if rtVer == "" {
+		rtVer = os.Getenv("PUDDLE_RUNTIME_VERSION")
+	}
+	if rtVer == "" {
+		rtVer = l.DefaultRuntime
+	}
+
+	libVer = flagLibVersion
+	if libVer == "" {
+		libVer = os.Getenv("PUDDLE_LIB_VERSION")
+	}
+	if libVer == "" {
+		libVer = l.DefaultLib
+	}
+
+	return
 }
 
 // ensureImage pulls a pre-built image from GHCR, falling back to a local build.
@@ -57,14 +100,7 @@ func ensureImage(ctx context.Context, langName string) (string, error) {
 		return "", err
 	}
 
-	duckdbVer := flagDuckDBVersion
-	if duckdbVer == "" {
-		duckdbVer = l.DefaultDuckDB
-	}
-	rtVer := flagRuntimeVersion
-	if rtVer == "" {
-		rtVer = l.DefaultRuntime
-	}
+	duckdbVer, rtVer, _ := resolveVersions(l)
 
 	// Force local build when --build, -a, or -l are set.
 	if flagBuild || flagArch != "" || flagLibVersion != "" {
@@ -72,7 +108,6 @@ func ensureImage(ctx context.Context, langName string) (string, error) {
 	}
 
 	tag := imageTag(langName, duckdbVer, rtVer)
-	remoteRef := remoteImageRef(langName, duckdbVer, rtVer)
 
 	cli, err := docker.New()
 	if err != nil {
@@ -84,6 +119,13 @@ func ensureImage(ctx context.Context, langName string) (string, error) {
 		return "", err
 	}
 
+	// Use the local image if it already exists.
+	if cli.ImageExists(ctx, tag) {
+		return tag, nil
+	}
+
+	// Try pulling from GHCR.
+	remoteRef := remoteImageRef(langName, duckdbVer, rtVer)
 	fmt.Fprintf(os.Stderr, "Pulling %s...\n", remoteRef)
 	pullErr := cli.Pull(ctx, docker.PullOptions{
 		RemoteRef: remoteRef,
@@ -120,30 +162,14 @@ func buildImage(ctx context.Context, langName string) (string, error) {
 		return "", fmt.Errorf("loading dockerfiles for %s: %w", langName, err)
 	}
 
-	buildArgs := make(map[string]string)
+	duckdbVer, rtVer, libVer := resolveVersions(l)
 
-	// DuckDB version.
-	duckdbVer := flagDuckDBVersion
-	if duckdbVer == "" {
-		duckdbVer = l.DefaultDuckDB
-	}
+	buildArgs := make(map[string]string)
 	if duckdbVer != "" && l.HasVersionOverride() {
 		buildArgs[l.DuckDBVersionArg] = duckdbVer
 	}
-
-	// Library version.
-	libVer := flagLibVersion
-	if libVer == "" {
-		libVer = l.DefaultLib
-	}
 	if libVer != "" && l.HasLibVersion() {
 		buildArgs[l.LibVersionArg] = libVer
-	}
-
-	// Runtime version.
-	rtVer := flagRuntimeVersion
-	if rtVer == "" {
-		rtVer = l.DefaultRuntime
 	}
 	if rtVer != "" && l.HasRuntimeVersion() {
 		buildArgs[l.RuntimeVersionArg] = rtVer
