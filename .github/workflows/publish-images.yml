@@ -16,48 +16,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Base: every language × 3 DuckDB versions (default runtimes).
-        lang: [python, java, node, go, rust, php, ruby]
+        lang: [python, java, node, go, php, ruby]  # TODO: fix slow rust builds
         duckdb: ["1.2.0", "1.3.0", "1.4.4"]
         include:
           # ── Python runtimes ──
-          - { lang: python, duckdb: "1.4.4", runtime: "3.10" }
-          - { lang: python, duckdb: "1.4.4", runtime: "3.12" }
-          - { lang: python, duckdb: "1.4.4", runtime: "3.13" }
+          - { lang: python, runtime: "3.11" }
+          - { lang: python, runtime: "3.12" }
+          - { lang: python, runtime: "3.13" }
           # ── Java runtimes ──
-          - { lang: java, duckdb: "1.4.4", runtime: "17" }
-          - { lang: java, duckdb: "1.4.4", runtime: "21" }
+          - { lang: java, runtime: "17" }
+          - { lang: java, runtime: "21" }
           # ── Node runtimes ──
-          - { lang: node, duckdb: "1.4.4", runtime: "18" }
-          - { lang: node, duckdb: "1.4.4", runtime: "20" }
-          - { lang: node, duckdb: "1.4.4", runtime: "22" }
+          - { lang: node, runtime: "18" }
+          - { lang: node, runtime: "20" }
+          - { lang: node, runtime: "22" }
           # ── Go runtimes ──
-          - { lang: go, duckdb: "1.4.4", runtime: "1.22" }
-          - { lang: go, duckdb: "1.4.4", runtime: "1.24" }
+          - { lang: go, runtime: "1.22" }
+          - { lang: go, runtime: "1.24" }
           # ── PHP runtimes ──
-          - { lang: php, duckdb: "1.4.4", runtime: "8.2" }
-          - { lang: php, duckdb: "1.4.4", runtime: "8.3" }
+          - { lang: php, runtime: "8.2" }
+          - { lang: php, runtime: "8.3" }
           # ── Ruby runtimes ──
-          - { lang: ruby, duckdb: "1.4.4", runtime: "3.2" }
-          - { lang: ruby, duckdb: "1.4.4", runtime: "3.3" }
+          - { lang: ruby, runtime: "3.2" }
+          - { lang: ruby, runtime: "3.3" }
     name: ${{ matrix.lang }} / duckdb ${{ matrix.duckdb }}${{ matrix.runtime && format(' / runtime {0}', matrix.runtime) || '' }}
-    env:
-      # Map language to its runtime version build-arg name.
-      RUNTIME_ARG_python: PYTHON_VERSION
-      RUNTIME_ARG_java: JAVA_VERSION
-      RUNTIME_ARG_node: NODE_VERSION
-      RUNTIME_ARG_go: GO_VERSION
-      RUNTIME_ARG_rust: RUST_VERSION
-      RUNTIME_ARG_php: PHP_VERSION
-      RUNTIME_ARG_ruby: RUBY_VERSION
-      # Default runtimes per language (used when matrix.runtime is empty).
-      DEFAULT_RT_python: "3.12"
-      DEFAULT_RT_java: "21"
-      DEFAULT_RT_node: "20"
-      DEFAULT_RT_go: "1.24"
-      DEFAULT_RT_rust: "1"
-      DEFAULT_RT_php: "8.3"
-      DEFAULT_RT_ruby: "3"
     steps:
       - uses: actions/checkout@v4
 
@@ -71,19 +53,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve runtime version
-        id: rt
-        run: |
-          RT="${{ matrix.runtime }}"
-          if [ -z "$RT" ]; then
-            RT="${{ env[format('DEFAULT_RT_{0}', matrix.lang)] }}"
-          fi
-          echo "version=$RT" >> "$GITHUB_OUTPUT"
-
       - name: Resolve runtime build-arg name
-        id: arg
-        run: |
-          echo "name=${{ env[format('RUNTIME_ARG_{0}', matrix.lang)] }}" >> "$GITHUB_OUTPUT"
+        id: rt
+        run: echo "arg=$(echo '${{ matrix.lang }}' | tr '[:lower:]' '[:upper:]')_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -91,10 +63,10 @@ jobs:
           context: dockerfiles/${{ matrix.lang }}
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ghcr.io/donnype/puddle-${{ matrix.lang }}:${{ matrix.duckdb }}-${{ steps.rt.outputs.version }}
-          cache-from: type=registry,ref=ghcr.io/donnype/puddle-${{ matrix.lang }}:${{ matrix.duckdb }}-${{ steps.rt.outputs.version }}
+          tags: ghcr.io/donnype/puddle-${{ matrix.lang }}:${{ matrix.duckdb }}-${{ matrix.runtime }}
+          cache-from: type=registry,ref=ghcr.io/donnype/puddle-${{ matrix.lang }}:${{ matrix.duckdb }}-${{ matrix.runtime }}
           cache-to: type=inline
           build-args: |
             DUCKDB_VERSION=${{ matrix.duckdb }}
-            ${{ steps.arg.outputs.name }}=${{ steps.rt.outputs.version }}
+            ${{ steps.rt.outputs.arg }}=${{ matrix.runtime }}
             ${{ matrix.lang == 'php' && format('DUCKDB_PHP_VERSION=2.0.3') || '' }}
