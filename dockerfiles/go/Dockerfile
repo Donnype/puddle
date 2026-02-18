@@ -5,7 +5,14 @@ ARG DUCKDB_VERSION=1.4.4
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y gcc g++ rlwrap && rm -rf /var/lib/apt/lists/*
+# Install g++ from Trixie (GCC 14) for its libstdc++ — the duckdb-go-bindings
+# v0.1.x static libs require __cxa_call_terminate which is missing in Bookworm's GCC 12.
+RUN echo "deb http://deb.debian.org/debian trixie main" > /etc/apt/sources.list.d/trixie.list \
+    && apt-get update \
+    && apt-get install -y gcc rlwrap \
+    && apt-get install -y -t trixie g++ \
+    && rm /etc/apt/sources.list.d/trixie.list \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY go.mod.tmpl repl.go ./
 RUN mv go.mod.tmpl go.mod

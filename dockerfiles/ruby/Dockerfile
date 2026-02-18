@@ -19,7 +19,8 @@ RUN ARCH=$(dpkg --print-architecture) && \
     && ldconfig /opt/local/lib \
     && rm -rf duckdb.zip libduckdb
 
-RUN gem install duckdb
+# Pin gem to match the DuckDB major.minor so older libduckdb is supported.
+RUN gem install duckdb -v "~> $(echo $DUCKDB_VERSION | cut -d. -f1,2).0"
 
 COPY repl.rb .
 CMD ["rlwrap", "ruby", "repl.rb"]
