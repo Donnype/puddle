@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
+	"puddle/internal/config"
 	"puddle/internal/lang"
 
 	"github.com/spf13/cobra"
@@ -12,42 +12,83 @@ import (
 var showCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show current puddle configuration",
-	Long:  `Display the active PUDDLE_* environment variables set by "puddle use".`,
-	Args:  cobra.NoArgs,
+	Long: `Display the resolved puddle configuration and where each value comes from.
+
+Sources (highest to lowest priority):
+  session  — from the active session file (puddle use)
+  global   — from ~/.config/puddle/config.json (puddle use --global)
+  default  — built-in registry default`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		langName := os.Getenv("PUDDLE_LANG")
+		sess := config.LoadSession()
+		global := config.LoadGlobal()
+		sessionID := config.ActiveSessionID()
+
+		// Resolve language.
+		langName, langSource := "", ""
+		if sess.Lang != "" {
+			langName, langSource = sess.Lang, "session"
+		} else if global.Lang != "" {
+			langName, langSource = global.Lang, "global"
+		}
+
 		if langName == "" {
-			fmt.Println("No puddle environment set.")
-			fmt.Println("Use: eval \"$(puddle use <language>)\"")
+			fmt.Println("No puddle configuration active.")
+			fmt.Println()
+			fmt.Println("Start a session:   puddle use <language>")
+			fmt.Println("Set global default: puddle use <language> --global")
 			return nil
 		}
 
 		l, err := lang.Get(langName)
 		if err != nil {
-			fmt.Printf("PUDDLE_LANG=%s (unknown language)\n", langName)
+			fmt.Printf("Language: %s (%s) — unknown language\n", langName, langSource)
 			return nil
 		}
 
-		duckdbVer := os.Getenv("PUDDLE_DUCKDB_VERSION")
-		if duckdbVer == "" {
-			duckdbVer = l.DefaultDuckDB
-		}
-		rtVer := os.Getenv("PUDDLE_RUNTIME_VERSION")
-		if rtVer == "" {
-			rtVer = l.DefaultRuntime
-		}
-		libVer := os.Getenv("PUDDLE_LIB_VERSION")
-		if libVer == "" {
-			libVer = l.DefaultLib
+		// Resolve each version with source tracking.
+		duckdbVer, duckdbSrc := resolveWithSource(
+			sess.DuckDBVersion, global.DuckDBVersion, l.DefaultDuckDB,
+		)
+		rtVer, rtSrc := resolveWithSource(
+			sess.RuntimeVersion, global.RuntimeVersion, l.DefaultRuntime,
+		)
+		libVer, libSrc := resolveWithSource(
+			sess.LibVersion, global.LibVersion, l.DefaultLib,
+		)
+
+		// Session info.
+		if sessionID != "" {
+			named := config.IsNamedSession(sessionID)
+			if named {
+				fmt.Printf("Session:         %s\n", sessionID)
+			} else {
+				fmt.Printf("Session:         %s (unnamed)\n", sessionID)
+			}
+			fmt.Printf("                 %s\n", config.SessionPath(sessionID))
 		}
 
-		fmt.Printf("Language:        %s (%s)\n", langName, l.Name)
-		fmt.Printf("DuckDB version:  %s\n", duckdbVer)
-		fmt.Printf("Runtime version: %s\n", rtVer)
+		fmt.Printf("Language:        %-12s  ← %s\n", langName+" ("+l.Name+")", langSource)
+		fmt.Printf("DuckDB version:  %-12s  ← %s\n", duckdbVer, duckdbSrc)
+		fmt.Printf("Runtime version: %-12s  ← %s\n", rtVer, rtSrc)
 		if libVer != "" {
-			fmt.Printf("Lib version:     %s\n", libVer)
+			fmt.Printf("Lib version:     %-12s  ← %s\n", libVer, libSrc)
 		}
 
 		return nil
 	},
+}
+
+// resolveWithSource returns the resolved value and its source label.
+func resolveWithSource(sessVal, globalVal, defaultVal string) (string, string) {
+	if sessVal != "" {
+		return sessVal, "session"
+	}
+	if globalVal != "" {
+		return globalVal, "global"
+	}
+	if defaultVal != "" {
+		return defaultVal, "default"
+	}
+	return "", ""
 }

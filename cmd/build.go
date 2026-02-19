@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"puddle/dockerfiles"
+	"puddle/internal/config"
 	"puddle/internal/docker"
 	"puddle/internal/lang"
 
@@ -21,28 +22,6 @@ var (
 	flagBuild          bool
 )
 
-var buildCmd = &cobra.Command{
-	Use:   "build [language]",
-	Short: "Build a Docker image for a language binding",
-	Args:  cobra.RangeArgs(0, 1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		langName, err := resolveLang(args)
-		if err != nil {
-			return err
-		}
-		tag, err := ensureImage(cmd.Context(), langName)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "\nImage ready: %s\n", tag)
-		return nil
-	},
-}
-
-func init() {
-	addBuildFlags(buildCmd)
-}
-
 func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVarP(&flagDuckDBVersion, "duckdb-version", "d", "", "DuckDB version (uses language default if unset)")
 	cmd.Flags().StringVarP(&flagArch, "arch", "a", "", "target architecture: amd64, arm64")
@@ -51,39 +30,70 @@ func addBuildFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&flagBuild, "build", false, "force a local build, skip pulling from GHCR")
 }
 
-// resolveLang returns the language name from args or PUDDLE_LANG env var.
+// resolveLang returns the language name from args, session, or global config.
 func resolveLang(args []string) (string, error) {
 	if len(args) > 0 {
 		return args[0], nil
 	}
-	if envLang := os.Getenv("PUDDLE_LANG"); envLang != "" {
-		return envLang, nil
+	if sess := config.LoadSession(); sess.Lang != "" {
+		return sess.Lang, nil
 	}
-	return "", fmt.Errorf("no language specified (set one with: eval \"$(puddle use <language>)\")")
+	if global := config.LoadGlobal(); global.Lang != "" {
+		return global.Lang, nil
+	}
+	return "", fmt.Errorf("no language specified (start a session with: puddle use <language>)")
 }
 
 // resolveVersions returns the DuckDB, runtime, and lib versions using:
-// CLI flags > PUDDLE_* env vars > language registry defaults.
+// CLI flags > session config > global config > language registry defaults.
 func resolveVersions(l lang.Language) (duckdbVer, rtVer, libVer string) {
+	return resolveVersionsFrom(l, true)
+}
+
+// resolveVersionsNoSession resolves versions skipping the current session.
+// Used by "puddle use" when creating a new session.
+func resolveVersionsNoSession(l lang.Language) (duckdbVer, rtVer, libVer string) {
+	return resolveVersionsFrom(l, false)
+}
+
+func resolveVersionsFrom(l lang.Language, includeSession bool) (duckdbVer, rtVer, libVer string) {
+	var sess config.Config
+	if includeSession {
+		sess = config.LoadSession()
+	}
+	global := config.LoadGlobal()
+
+	// DuckDB version.
 	duckdbVer = flagDuckDBVersion
 	if duckdbVer == "" {
-		duckdbVer = os.Getenv("PUDDLE_DUCKDB_VERSION")
+		duckdbVer = sess.DuckDBVersion
+	}
+	if duckdbVer == "" {
+		duckdbVer = global.DuckDBVersion
 	}
 	if duckdbVer == "" {
 		duckdbVer = l.DefaultDuckDB
 	}
 
+	// Runtime version.
 	rtVer = flagRuntimeVersion
 	if rtVer == "" {
-		rtVer = os.Getenv("PUDDLE_RUNTIME_VERSION")
+		rtVer = sess.RuntimeVersion
+	}
+	if rtVer == "" {
+		rtVer = global.RuntimeVersion
 	}
 	if rtVer == "" {
 		rtVer = l.DefaultRuntime
 	}
 
+	// Lib version.
 	libVer = flagLibVersion
 	if libVer == "" {
-		libVer = os.Getenv("PUDDLE_LIB_VERSION")
+		libVer = sess.LibVersion
+	}
+	if libVer == "" {
+		libVer = global.LibVersion
 	}
 	if libVer == "" {
 		libVer = l.DefaultLib

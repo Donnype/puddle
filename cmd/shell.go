@@ -10,7 +10,7 @@ var shellCmd = &cobra.Command{
 	Long: `Start a bash shell inside a container for the specified language binding.
 The current directory is mounted at /work inside the container.
 
-The language can be omitted if PUDDLE_LANG is set (see "puddle use").
+The language can be omitted inside a puddle session (see "puddle use").
 
 This is equivalent to "puddle run <language>" (without --repl).`,
 	Args: cobra.RangeArgs(0, 1),

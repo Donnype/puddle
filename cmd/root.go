@@ -26,7 +26,6 @@ func Execute() {
 
 func init() {
 	rootCmd.AddCommand(listCmd)
-	rootCmd.AddCommand(buildCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(cleanCmd)
 	rootCmd.AddCommand(shellCmd)

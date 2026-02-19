@@ -28,7 +28,7 @@ var runCmd = &cobra.Command{
 By default, opens a bash shell with the current directory mounted at /work.
 Use --repl to start the interactive DuckDB SQL REPL instead.
 
-The language can be omitted if PUDDLE_LANG is set (see "puddle use").
+The language can be omitted inside a puddle session (see "puddle use").
 
 Use -c to execute a SQL command and exit:
   puddle run python -c "SELECT 42;"
