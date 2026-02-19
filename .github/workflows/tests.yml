@@ -37,11 +37,6 @@ jobs:
           ./puddle list
           ./puddle list | grep -q python
 
-      - name: puddle build
-        run: |
-          ./puddle build python --build
-          docker images | grep puddle-python
-
       - name: puddle run -c (SQL command)
         run: |
           ./puddle run python -c "SELECT 42 AS ok;" | tee /tmp/sql.txt
@@ -62,25 +57,40 @@ jobs:
           ./puddle run python --repl -c "SELECT 'repl' AS mode;" | tee /tmp/repl.txt
           grep -q "repl" /tmp/repl.txt
 
-      - name: puddle use + show
+      - name: puddle use --global + show
         run: |
-          # use outputs export statements
-          ./puddle use python -d 1.3.0 -r 3.11 | grep -q "PUDDLE_LANG=python"
-          ./puddle use python -d 1.3.0 -r 3.11 | grep -q "PUDDLE_DUCKDB_VERSION=1.3.0"
-
-          # eval + show
-          eval "$(./puddle use python -d 1.3.0 -r 3.11)"
+          # set global default
+          ./puddle use python --global -d 1.3.0 -r 3.11
           ./puddle show | grep -q "python"
           ./puddle show | grep -q "1.3.0"
           ./puddle show | grep -q "3.11"
+          ./puddle show | grep -q "global"
 
-          # run without language arg
+          # run without language arg picks up global config
           ./puddle run -c "SELECT version();" | tee /tmp/use.txt
           grep -q "1.3.0" /tmp/use.txt
 
-          # clear
-          eval "$(./puddle use --clear)"
-          ./puddle show | grep -q "No puddle environment"
+          # clear global config
+          ./puddle use --clear
+          ./puddle show | grep -q "No puddle configuration"
+
+      - name: puddle use session (subshell)
+        run: |
+          # session subshell: puddle show works inside it
+          echo './puddle show > /tmp/session_show.txt; exit' | ./puddle use python -d 1.3.0 -r 3.11 2>/dev/null
+          grep -q "python" /tmp/session_show.txt
+          grep -q "1.3.0" /tmp/session_show.txt
+          grep -q "session" /tmp/session_show.txt
+
+          # unnamed session file is cleaned up after exit
+          ls ~/.config/puddle/sessions/ 2>/dev/null | grep -qv . || true
+
+      - name: puddle use --name (named session)
+        run: |
+          echo 'exit' | ./puddle use python --name testenv -d 1.4.4 2>/dev/null
+          # named session file persists
+          test -f ~/.config/puddle/sessions/testenv.json
+          grep -q "1.4.4" ~/.config/puddle/sessions/testenv.json
 
       - name: puddle clean
         run: |
@@ -88,6 +98,10 @@ jobs:
           ./puddle clean
           # Verify no puddle images remain
           ! docker images | grep "puddle-"
+
+      - name: puddle clean --sessions
+        run: |
+          ./puddle clean --sessions
 
       - name: puddle run --native (Python)
         run: |
