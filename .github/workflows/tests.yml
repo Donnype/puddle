@@ -140,6 +140,6 @@ jobs:
       - run: chmod +x puddle
       - name: "SELECT 1"
         run: |
-          ./puddle run ${{ matrix.runtime.lang }} -d ${{ matrix.duckdb }} -r ${{ matrix.runtime.version }} --build -c "SELECT 1 AS ok;" > /tmp/output.txt
+          ./puddle run ${{ matrix.runtime.lang }} -d ${{ matrix.duckdb }} -r ${{ matrix.runtime.version }} -c "SELECT 1 AS ok;" > /tmp/output.txt
           cat /tmp/output.txt
           grep -q "ok" /tmp/output.txt
