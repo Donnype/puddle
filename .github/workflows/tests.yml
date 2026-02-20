@@ -154,7 +154,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.TOKEN }}
       - name: "SELECT 1"
         run: |
           ./puddle run ${{ matrix.runtime.lang }} -d ${{ matrix.duckdb }} -r ${{ matrix.runtime.version }} -c "SELECT 1 AS ok;" > /tmp/output.txt
