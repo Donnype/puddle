@@ -124,25 +124,6 @@ func ListSessions() ([]string, error) {
 	return ids, nil
 }
 
-// CleanStaleSessions removes unnamed session files that no longer have a
-// running shell (best-effort: we just remove all unnamed sessions).
-func CleanStaleSessions() (int, error) {
-	ids, err := ListSessions()
-	if err != nil {
-		return 0, err
-	}
-	var removed int
-	for _, id := range ids {
-		if IsNamedSession(id) {
-			continue
-		}
-		if err := RemoveSession(id); err == nil {
-			removed++
-		}
-	}
-	return removed, nil
-}
-
 func loadFile(path string) Config {
 	data, err := os.ReadFile(path)
 	if err != nil {

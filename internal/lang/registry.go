@@ -19,21 +19,6 @@ type Language struct {
 	NativeBin         string // default binary for native (non-Docker) mode
 }
 
-// HasVersionOverride reports whether the DuckDB version can be set via build arg.
-func (l Language) HasVersionOverride() bool {
-	return l.DuckDBVersionArg != ""
-}
-
-// HasLibVersion reports whether the language has a separate library version arg.
-func (l Language) HasLibVersion() bool {
-	return l.LibVersionArg != ""
-}
-
-// HasRuntimeVersion reports whether the language runtime version is configurable.
-func (l Language) HasRuntimeVersion() bool {
-	return l.RuntimeVersionArg != ""
-}
-
 // Registry holds all known languages.
 var Registry = map[string]Language{
 	"go": {

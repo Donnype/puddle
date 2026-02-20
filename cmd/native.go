@@ -41,10 +41,7 @@ func runNative(ctx context.Context, langName, binary string, sqlReader io.Reader
 		binary = l.NativeBin
 	}
 
-	duckdbVer := flagDuckDBVersion
-	if duckdbVer == "" {
-		duckdbVer = l.DefaultDuckDB
-	}
+	duckdbVer, _, _ := resolveVersions(l)
 
 	cmdArgs, err := nativeSetup(ctx, l, tmpDir, binary, duckdbVer)
 	if err != nil {

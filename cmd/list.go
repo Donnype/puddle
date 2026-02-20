@@ -20,7 +20,7 @@ var listCmd = &cobra.Command{
 			l := lang.Registry[name]
 
 			extra := ""
-			if l.HasLibVersion() {
+			if l.DefaultLib != "" {
 				extra = fmt.Sprintf(", lib=%s", l.DefaultLib)
 			}
 

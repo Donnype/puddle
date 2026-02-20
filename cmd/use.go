@@ -143,9 +143,7 @@ Inside the session, puddle commands automatically use the session config.`,
 }
 
 func init() {
-	useCmd.Flags().StringVarP(&flagDuckDBVersion, "duckdb-version", "d", "", "DuckDB version")
-	useCmd.Flags().StringVarP(&flagRuntimeVersion, "runtime-version", "r", "", "language runtime version")
-	useCmd.Flags().StringVarP(&flagLibVersion, "lib-version", "l", "", "language library version")
+	addVersionFlags(useCmd)
 	useCmd.Flags().StringVar(&flagSessionName, "name", "", "name the session (persists after exit)")
 	useCmd.Flags().BoolVar(&flagGlobal, "global", false, "set global default instead of starting a session")
 	useCmd.Flags().BoolVar(&flagClear, "clear", false, "clear global config")

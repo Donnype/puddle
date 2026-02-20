@@ -86,35 +86,29 @@ func cleanSessions() error {
 	if err != nil {
 		return fmt.Errorf("listing sessions: %w", err)
 	}
-
 	if len(sessions) == 0 {
 		fmt.Fprintln(os.Stderr, "No session files found.")
 		return nil
 	}
 
-	// Show what we found.
-	var unnamed, named int
+	var named, removed int
 	for _, id := range sessions {
 		if config.IsNamedSession(id) {
 			named++
-		} else {
-			unnamed++
+			continue
+		}
+		if config.RemoveSession(id) == nil {
+			removed++
 		}
 	}
 
-	if unnamed == 0 {
+	if removed == 0 {
 		fmt.Fprintf(os.Stderr, "No stale unnamed sessions found (%d named session(s) preserved).\n", named)
-		return nil
-	}
-
-	removed, err := config.CleanStaleSessions()
-	if err != nil {
-		return fmt.Errorf("cleaning sessions: %w", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "Removed %d stale session(s).\n", removed)
-	if named > 0 {
-		fmt.Fprintf(os.Stderr, "%d named session(s) preserved.\n", named)
+	} else {
+		fmt.Fprintf(os.Stderr, "Removed %d stale session(s).\n", removed)
+		if named > 0 {
+			fmt.Fprintf(os.Stderr, "%d named session(s) preserved.\n", named)
+		}
 	}
 	return nil
 }

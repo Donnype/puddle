@@ -22,11 +22,15 @@ var (
 	flagBuild          bool
 )
 
-func addBuildFlags(cmd *cobra.Command) {
-	cmd.Flags().StringVarP(&flagDuckDBVersion, "duckdb-version", "d", "", "DuckDB version (uses language default if unset)")
-	cmd.Flags().StringVarP(&flagArch, "arch", "a", "", "target architecture: amd64, arm64")
-	cmd.Flags().StringVarP(&flagLibVersion, "lib-version", "l", "", "language library version (e.g. PHP duckdb lib)")
+func addVersionFlags(cmd *cobra.Command) {
+	cmd.Flags().StringVarP(&flagDuckDBVersion, "duckdb-version", "d", "", "DuckDB version")
 	cmd.Flags().StringVarP(&flagRuntimeVersion, "runtime-version", "r", "", "language runtime version (e.g. Python 3.11, Java 17)")
+	cmd.Flags().StringVarP(&flagLibVersion, "lib-version", "l", "", "language library version (e.g. PHP duckdb lib)")
+}
+
+func addBuildFlags(cmd *cobra.Command) {
+	addVersionFlags(cmd)
+	cmd.Flags().StringVarP(&flagArch, "arch", "a", "", "target architecture: amd64, arm64")
 	cmd.Flags().BoolVar(&flagBuild, "build", false, "force a local build, skip pulling from GHCR")
 }
 
@@ -46,60 +50,35 @@ func resolveLang(args []string) (string, error) {
 
 // resolveVersions returns the DuckDB, runtime, and lib versions using:
 // CLI flags > session config > global config > language registry defaults.
-func resolveVersions(l lang.Language) (duckdbVer, rtVer, libVer string) {
+func resolveVersions(l lang.Language) (string, string, string) {
 	return resolveVersionsFrom(l, true)
 }
 
 // resolveVersionsNoSession resolves versions skipping the current session.
 // Used by "puddle use" when creating a new session.
-func resolveVersionsNoSession(l lang.Language) (duckdbVer, rtVer, libVer string) {
+func resolveVersionsNoSession(l lang.Language) (string, string, string) {
 	return resolveVersionsFrom(l, false)
 }
 
-func resolveVersionsFrom(l lang.Language, includeSession bool) (duckdbVer, rtVer, libVer string) {
+func resolveVersionsFrom(l lang.Language, includeSession bool) (string, string, string) {
 	var sess config.Config
 	if includeSession {
 		sess = config.LoadSession()
 	}
 	global := config.LoadGlobal()
 
-	// DuckDB version.
-	duckdbVer = flagDuckDBVersion
-	if duckdbVer == "" {
-		duckdbVer = sess.DuckDBVersion
-	}
-	if duckdbVer == "" {
-		duckdbVer = global.DuckDBVersion
-	}
-	if duckdbVer == "" {
-		duckdbVer = l.DefaultDuckDB
-	}
+	return firstNonEmpty(flagDuckDBVersion, sess.DuckDBVersion, global.DuckDBVersion, l.DefaultDuckDB),
+		firstNonEmpty(flagRuntimeVersion, sess.RuntimeVersion, global.RuntimeVersion, l.DefaultRuntime),
+		firstNonEmpty(flagLibVersion, sess.LibVersion, global.LibVersion, l.DefaultLib)
+}
 
-	// Runtime version.
-	rtVer = flagRuntimeVersion
-	if rtVer == "" {
-		rtVer = sess.RuntimeVersion
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
 	}
-	if rtVer == "" {
-		rtVer = global.RuntimeVersion
-	}
-	if rtVer == "" {
-		rtVer = l.DefaultRuntime
-	}
-
-	// Lib version.
-	libVer = flagLibVersion
-	if libVer == "" {
-		libVer = sess.LibVersion
-	}
-	if libVer == "" {
-		libVer = global.LibVersion
-	}
-	if libVer == "" {
-		libVer = l.DefaultLib
-	}
-
-	return
+	return ""
 }
 
 // ensureImage pulls a pre-built image from GHCR, falling back to a local build.
@@ -129,13 +108,12 @@ func ensureImage(ctx context.Context, langName string) (string, error) {
 		return "", err
 	}
 
-	// Use the local image if it already exists.
 	if cli.ImageExists(ctx, tag) {
 		return tag, nil
 	}
 
 	// Try pulling from GHCR.
-	remoteRef := remoteImageRef(langName, duckdbVer, rtVer)
+	remoteRef := fmt.Sprintf("%s/%s", docker.GHCRPrefix, tag)
 	fmt.Fprintf(os.Stderr, "Pulling %s...\n", remoteRef)
 	pullErr := cli.Pull(ctx, docker.PullOptions{
 		RemoteRef: remoteRef,
@@ -166,7 +144,6 @@ func buildImage(ctx context.Context, langName string) (string, error) {
 		return "", err
 	}
 
-	// Get the embedded filesystem for this language.
 	contextFS, err := fs.Sub(dockerfiles.FS, l.Dir)
 	if err != nil {
 		return "", fmt.Errorf("loading dockerfiles for %s: %w", langName, err)
@@ -175,20 +152,19 @@ func buildImage(ctx context.Context, langName string) (string, error) {
 	duckdbVer, rtVer, libVer := resolveVersions(l)
 
 	buildArgs := make(map[string]string)
-	if duckdbVer != "" && l.HasVersionOverride() {
+	if duckdbVer != "" && l.DuckDBVersionArg != "" {
 		buildArgs[l.DuckDBVersionArg] = duckdbVer
 	}
-	if libVer != "" && l.HasLibVersion() {
+	if libVer != "" && l.LibVersionArg != "" {
 		buildArgs[l.LibVersionArg] = libVer
 	}
-	if rtVer != "" && l.HasRuntimeVersion() {
+	if rtVer != "" && l.RuntimeVersionArg != "" {
 		buildArgs[l.RuntimeVersionArg] = rtVer
 	}
 
-	// Platform.
 	var platform string
 	if flagArch != "" {
-		platform = fmt.Sprintf("linux/%s", flagArch)
+		platform = "linux/" + flagArch
 	}
 
 	tag := imageTag(langName, duckdbVer, rtVer)
@@ -208,29 +184,13 @@ func buildImage(ctx context.Context, langName string) (string, error) {
 }
 
 func imageTag(langName, duckdbVer, runtimeVer string) string {
-	ver := duckdbVer
-	if ver == "" {
-		ver = "latest"
-	}
-	rt := runtimeVer
-	if rt == "" {
-		rt = "default"
-	}
-	tag := fmt.Sprintf("puddle-%s:%s-%s", langName, ver, rt)
+	tag := fmt.Sprintf("puddle-%s:%s-%s",
+		langName,
+		firstNonEmpty(duckdbVer, "latest"),
+		firstNonEmpty(runtimeVer, "default"),
+	)
 	if flagArch != "" {
 		tag += "-" + flagArch
 	}
 	return tag
-}
-
-func remoteImageRef(langName, duckdbVer, runtimeVer string) string {
-	ver := duckdbVer
-	if ver == "" {
-		ver = "latest"
-	}
-	rt := runtimeVer
-	if rt == "" {
-		rt = "default"
-	}
-	return fmt.Sprintf("%s/puddle-%s:%s-%s", docker.GHCRPrefix, langName, ver, rt)
 }
