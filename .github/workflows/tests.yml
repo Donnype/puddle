@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  packages: read
 
 jobs:
   build:
@@ -35,13 +34,6 @@ jobs:
         with:
           name: puddle
       - run: chmod +x puddle
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.TOKEN }}
 
       - name: puddle list
         run: |
@@ -149,12 +141,6 @@ jobs:
         with:
           name: puddle
       - run: chmod +x puddle
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.TOKEN }}
       - name: "SELECT 1"
         run: |
           ./puddle run ${{ matrix.runtime.lang }} -d ${{ matrix.duckdb }} -r ${{ matrix.runtime.version }} -c "SELECT 1 AS ok;" > /tmp/output.txt
