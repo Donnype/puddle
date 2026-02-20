@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
+	"time"
 
 	"puddle/dockerfiles"
 	"puddle/internal/config"
@@ -81,8 +83,7 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-// ensureImage pulls a pre-built image from GHCR, falling back to a local build.
-// If --build is set or -l/-a are specified, it builds locally directly.
+// ensureImage pulls a pre-built image from GHCR, or builds locally with --build.
 func ensureImage(ctx context.Context, langName string) (string, error) {
 	l, err := lang.Get(langName)
 	if err != nil {
@@ -91,7 +92,6 @@ func ensureImage(ctx context.Context, langName string) (string, error) {
 
 	duckdbVer, rtVer, _ := resolveVersions(l)
 
-	// Force local build when --build, -a, or -l are set.
 	if flagBuild || flagArch != "" || flagLibVersion != "" {
 		return buildImage(ctx, langName)
 	}
@@ -112,19 +112,18 @@ func ensureImage(ctx context.Context, langName string) (string, error) {
 		return tag, nil
 	}
 
-	// Try pulling from GHCR.
 	remoteRef := fmt.Sprintf("%s/%s", docker.GHCRPrefix, tag)
 	fmt.Fprintf(os.Stderr, "Pulling %s...\n", remoteRef)
-	pullErr := cli.Pull(ctx, docker.PullOptions{
-		RemoteRef: remoteRef,
-		LocalTag:  tag,
+	err = retryOnRateLimit(ctx, func() error {
+		return cli.Pull(ctx, docker.PullOptions{
+			RemoteRef: remoteRef,
+			LocalTag:  tag,
+		})
 	})
-	if pullErr == nil {
-		return tag, nil
+	if err != nil {
+		return "", fmt.Errorf("pulling image: %w\n(use --build to build locally)", err)
 	}
-
-	fmt.Fprintf(os.Stderr, "Pull failed (%v), building locally...\n", pullErr)
-	return buildImage(ctx, langName)
+	return tag, nil
 }
 
 // buildImage builds the Docker image and returns the image tag.
@@ -170,17 +169,45 @@ func buildImage(ctx context.Context, langName string) (string, error) {
 	tag := imageTag(langName, duckdbVer, rtVer)
 
 	fmt.Fprintf(os.Stderr, "Building %s %s with DuckDB %s...\n", l.Name, rtVer, duckdbVer)
-	err = cli.Build(ctx, docker.BuildOptions{
-		ContextFS: contextFS,
-		Tag:       tag,
-		Platform:  platform,
-		BuildArgs: buildArgs,
+	err = retryOnRateLimit(ctx, func() error {
+		return cli.Build(ctx, docker.BuildOptions{
+			ContextFS: contextFS,
+			Tag:       tag,
+			Platform:  platform,
+			BuildArgs: buildArgs,
+		})
 	})
 	if err != nil {
 		return "", err
 	}
 
 	return tag, nil
+}
+
+// retryOnRateLimit retries fn up to 3 times with backoff when a Docker rate
+// limit error is detected (HTTP 429 / "toomanyrequests").
+func retryOnRateLimit(ctx context.Context, fn func() error) error {
+	backoff := [3]time.Duration{10 * time.Second, 30 * time.Second, 60 * time.Second}
+	var err error
+	for attempt := range 4 {
+		err = fn()
+		if err == nil || !isRateLimitError(err) || attempt == 3 {
+			return err
+		}
+		wait := backoff[attempt]
+		fmt.Fprintf(os.Stderr, "Rate limited, retrying in %s...\n", wait)
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return err
+}
+
+func isRateLimitError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "toomanyrequests") || strings.Contains(msg, "rate limit")
 }
 
 func imageTag(langName, duckdbVer, runtimeVer string) string {
