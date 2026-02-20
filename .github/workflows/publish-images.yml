@@ -3,6 +3,10 @@ name: Publish Images
 on:
   push:
     branches: [main]
+    paths:
+      - .github/workflows/publish-images.yml
+      - cmd/image.go
+      - dockerfiles/**
   workflow_dispatch:
 
 permissions:
