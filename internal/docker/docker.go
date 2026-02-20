@@ -4,11 +4,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/docker/docker/api/types"
@@ -319,7 +321,8 @@ type PullOptions struct {
 // Pull pulls a remote image and optionally retags it to a local name.
 func (c *Client) Pull(ctx context.Context, opts PullOptions) error {
 	pullOpts := image.PullOptions{
-		Platform: opts.Platform,
+		Platform:     opts.Platform,
+		RegistryAuth: registryAuth(opts.RemoteRef),
 	}
 
 	reader, err := c.cli.ImagePull(ctx, opts.RemoteRef, pullOpts)
@@ -412,6 +415,39 @@ func shortID(id string) string {
 		return id[:12]
 	}
 	return id
+}
+
+// registryAuth returns base64-encoded credentials for the registry in ref,
+// read from ~/.docker/config.json. Returns "" if no credentials are found.
+func registryAuth(ref string) string {
+	host := ref
+	if i := strings.IndexByte(host, '/'); i >= 0 {
+		host = host[:i]
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".docker", "config.json"))
+	if err != nil {
+		return ""
+	}
+
+	var cfg struct {
+		Auths map[string]json.RawMessage `json:"auths"`
+	}
+	if json.Unmarshal(data, &cfg) != nil {
+		return ""
+	}
+
+	entry, ok := cfg.Auths[host]
+	if !ok {
+		return ""
+	}
+
+	return base64.URLEncoding.EncodeToString(entry)
 }
 
 // streamBuildOutput reads Docker build JSON output and prints it.
