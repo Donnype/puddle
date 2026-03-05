@@ -14,8 +14,6 @@ import (
 
 var (
 	flagREPL   bool
-	flagNative bool
-	flagBinary string
 	flagEnv    []string
 	flagSQLCmd string
 )
@@ -28,7 +26,7 @@ var runCmd = &cobra.Command{
 By default, opens a bash shell with the current directory mounted at /work.
 Use --repl to start the interactive DuckDB SQL REPL instead.
 
-The language can be omitted inside a puddle session (see "puddle use").
+The language can be omitted if a global default is set (see "puddle use --global").
 
 Use -c to execute a SQL command and exit:
   puddle run python -c "SELECT 42;"
@@ -37,10 +35,7 @@ Use -c - to read SQL from stdin:
   echo "SELECT 42;" | puddle run python -c -
 
 Pass a SQL file as a second argument:
-  puddle run python query.sql
-
-Use --native to run without Docker, using the host's language runtime.
-Use --binary to override the default runtime binary in native mode.`,
+  puddle run python query.sql`,
 	Args: cobra.RangeArgs(0, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		langName, err := resolveLang(args)
@@ -75,10 +70,6 @@ Use --binary to override the default runtime binary in native mode.`,
 			sqlReader = strings.NewReader(string(data) + ";\n.quit\n")
 		}
 
-		if flagNative {
-			return runNative(cmd.Context(), langName, flagBinary, sqlReader)
-		}
-
 		// SQL mode (batch or interactive REPL).
 		if sqlReader != nil || flagREPL {
 			return runREPL(cmd.Context(), langName, sqlReader)
@@ -90,10 +81,8 @@ Use --binary to override the default runtime binary in native mode.`,
 }
 
 func init() {
-	addBuildFlags(runCmd)
+	addVersionFlags(runCmd)
 	runCmd.Flags().BoolVar(&flagREPL, "repl", false, "start the DuckDB SQL REPL instead of a shell")
-	runCmd.Flags().BoolVarP(&flagNative, "native", "n", false, "run without Docker using the host's runtime")
-	runCmd.Flags().StringVarP(&flagBinary, "binary", "b", "", "path to the language runtime binary (native mode)")
 	runCmd.Flags().StringArrayVarP(&flagEnv, "env", "e", nil, "set environment variables (KEY=VALUE), can be repeated")
 	runCmd.Flags().StringVarP(&flagSQLCmd, "command", "c", "", "execute a SQL command and exit (use - to read from stdin)")
 }
@@ -115,16 +104,10 @@ func runREPL(ctx context.Context, langName string, sqlReader io.Reader) error {
 		return err
 	}
 
-	cli, err := docker.New()
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
 	if sqlReader == nil {
 		fmt.Fprintf(os.Stderr, "\nStarting REPL...\n")
 	}
-	return cli.Run(ctx, docker.RunOptions{
+	return docker.Run(ctx, docker.RunOptions{
 		Image: tag,
 		Env:   defaultEnv(),
 		Stdin: sqlReader,
@@ -138,19 +121,13 @@ func runShellMode(ctx context.Context, langName string) error {
 		return err
 	}
 
-	cli, err := docker.New()
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
 	pwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getting working directory: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "\nStarting shell (%s mounted at /work)...\n", pwd)
-	return cli.Run(ctx, docker.RunOptions{
+	return docker.Run(ctx, docker.RunOptions{
 		Image:      tag,
 		Env:        defaultEnv(),
 		Cmd:        []string{"/bin/bash"},

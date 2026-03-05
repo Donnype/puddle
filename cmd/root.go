@@ -8,11 +8,11 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "puddle",
-	Short: "Spin up DuckDB with any language binding via Docker",
-	Long: `puddle builds and runs Docker containers for DuckDB language bindings.
+	Short: "Run DuckDB with any language binding via Docker",
+	Long: `puddle pulls and runs pre-built Docker containers for DuckDB language bindings.
 
-It ships self-contained Dockerfiles for Go, Python, Java, Node.js,
-Rust, PHP, and Ruby — each with a built-in SQL REPL.
+It supports Go, Python, Java, Node.js, Rust, PHP, and Ruby — each with
+a built-in SQL REPL.
 
 Supports DuckDB versions from 1.2.x to 1.4.4 and both amd64/arm64.`,
 	SilenceUsage: true,

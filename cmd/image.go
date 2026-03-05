@@ -3,12 +3,10 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"os"
 	"strings"
 	"time"
 
-	"puddle/dockerfiles"
 	"puddle/internal/config"
 	"puddle/internal/docker"
 	"puddle/internal/lang"
@@ -18,60 +16,31 @@ import (
 
 var (
 	flagDuckDBVersion  string
-	flagArch           string
-	flagLibVersion     string
 	flagRuntimeVersion string
-	flagBuild          bool
 )
 
 func addVersionFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVarP(&flagDuckDBVersion, "duckdb-version", "d", "", "DuckDB version")
 	cmd.Flags().StringVarP(&flagRuntimeVersion, "runtime-version", "r", "", "language runtime version (e.g. Python 3.11, Java 17)")
-	cmd.Flags().StringVarP(&flagLibVersion, "lib-version", "l", "", "language library version (e.g. PHP duckdb lib)")
 }
 
-func addBuildFlags(cmd *cobra.Command) {
-	addVersionFlags(cmd)
-	cmd.Flags().StringVarP(&flagArch, "arch", "a", "", "target architecture: amd64, arm64")
-	cmd.Flags().BoolVar(&flagBuild, "build", false, "force a local build, skip pulling from GHCR")
-}
-
-// resolveLang returns the language name from args, session, or global config.
+// resolveLang returns the language name from args or global config.
 func resolveLang(args []string) (string, error) {
 	if len(args) > 0 {
 		return args[0], nil
 	}
-	if sess := config.LoadSession(); sess.Lang != "" {
-		return sess.Lang, nil
-	}
 	if global := config.LoadGlobal(); global.Lang != "" {
 		return global.Lang, nil
 	}
-	return "", fmt.Errorf("no language specified (start a session with: puddle use <language>)")
+	return "", fmt.Errorf("no language specified (set a default with: puddle use <language> --global)")
 }
 
-// resolveVersions returns the DuckDB, runtime, and lib versions using:
-// CLI flags > session config > global config > language registry defaults.
-func resolveVersions(l lang.Language) (string, string, string) {
-	return resolveVersionsFrom(l, true)
-}
-
-// resolveVersionsNoSession resolves versions skipping the current session.
-// Used by "puddle use" when creating a new session.
-func resolveVersionsNoSession(l lang.Language) (string, string, string) {
-	return resolveVersionsFrom(l, false)
-}
-
-func resolveVersionsFrom(l lang.Language, includeSession bool) (string, string, string) {
-	var sess config.Config
-	if includeSession {
-		sess = config.LoadSession()
-	}
+// resolveVersions returns the DuckDB and runtime versions using:
+// CLI flags > global config > language registry defaults.
+func resolveVersions(l lang.Language) (string, string) {
 	global := config.LoadGlobal()
-
-	return firstNonEmpty(flagDuckDBVersion, sess.DuckDBVersion, global.DuckDBVersion, l.DefaultDuckDB),
-		firstNonEmpty(flagRuntimeVersion, sess.RuntimeVersion, global.RuntimeVersion, l.DefaultRuntime),
-		firstNonEmpty(flagLibVersion, sess.LibVersion, global.LibVersion, l.DefaultLib)
+	return firstNonEmpty(flagDuckDBVersion, global.DuckDBVersion, l.DefaultDuckDB),
+		firstNonEmpty(flagRuntimeVersion, global.RuntimeVersion, l.DefaultRuntime)
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -83,104 +52,35 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-// ensureImage pulls a pre-built image from GHCR, or builds locally with --build.
+// ensureImage pulls a pre-built image from GHCR if not already cached.
 func ensureImage(ctx context.Context, langName string) (string, error) {
 	l, err := lang.Get(langName)
 	if err != nil {
 		return "", err
 	}
 
-	duckdbVer, rtVer, _ := resolveVersions(l)
-
-	if flagBuild || flagArch != "" || flagLibVersion != "" {
-		return buildImage(ctx, langName)
-	}
-
+	duckdbVer, rtVer := resolveVersions(l)
 	tag := imageTag(langName, duckdbVer, rtVer)
 
-	cli, err := docker.New()
-	if err != nil {
-		return "", err
-	}
-	defer cli.Close()
-
-	if err := cli.Ping(ctx); err != nil {
+	if err := docker.Ping(ctx); err != nil {
 		return "", err
 	}
 
-	if cli.ImageExists(ctx, tag) {
+	if docker.ImageExists(ctx, tag) {
 		return tag, nil
 	}
 
 	remoteRef := fmt.Sprintf("%s/%s", docker.GHCRPrefix, tag)
 	fmt.Fprintf(os.Stderr, "Pulling %s...\n", remoteRef)
 	err = retryOnRateLimit(ctx, func() error {
-		return cli.Pull(ctx, docker.PullOptions{
+		return docker.Pull(ctx, docker.PullOptions{
 			RemoteRef: remoteRef,
 			LocalTag:  tag,
 		})
 	})
 	if err != nil {
-		return "", fmt.Errorf("pulling image: %w\n(use --build to build locally)", err)
+		return "", fmt.Errorf("pulling image: %w", err)
 	}
-	return tag, nil
-}
-
-// buildImage builds the Docker image and returns the image tag.
-func buildImage(ctx context.Context, langName string) (string, error) {
-	l, err := lang.Get(langName)
-	if err != nil {
-		return "", err
-	}
-
-	cli, err := docker.New()
-	if err != nil {
-		return "", err
-	}
-	defer cli.Close()
-
-	if err := cli.Ping(ctx); err != nil {
-		return "", err
-	}
-
-	contextFS, err := fs.Sub(dockerfiles.FS, l.Dir)
-	if err != nil {
-		return "", fmt.Errorf("loading dockerfiles for %s: %w", langName, err)
-	}
-
-	duckdbVer, rtVer, libVer := resolveVersions(l)
-
-	buildArgs := make(map[string]string)
-	if duckdbVer != "" && l.DuckDBVersionArg != "" {
-		buildArgs[l.DuckDBVersionArg] = duckdbVer
-	}
-	if libVer != "" && l.LibVersionArg != "" {
-		buildArgs[l.LibVersionArg] = libVer
-	}
-	if rtVer != "" && l.RuntimeVersionArg != "" {
-		buildArgs[l.RuntimeVersionArg] = rtVer
-	}
-
-	var platform string
-	if flagArch != "" {
-		platform = "linux/" + flagArch
-	}
-
-	tag := imageTag(langName, duckdbVer, rtVer)
-
-	fmt.Fprintf(os.Stderr, "Building %s %s with DuckDB %s...\n", l.Name, rtVer, duckdbVer)
-	err = retryOnRateLimit(ctx, func() error {
-		return cli.Build(ctx, docker.BuildOptions{
-			ContextFS: contextFS,
-			Tag:       tag,
-			Platform:  platform,
-			BuildArgs: buildArgs,
-		})
-	})
-	if err != nil {
-		return "", err
-	}
-
 	return tag, nil
 }
 
@@ -211,13 +111,9 @@ func isRateLimitError(err error) bool {
 }
 
 func imageTag(langName, duckdbVer, runtimeVer string) string {
-	tag := fmt.Sprintf("puddle-%s:%s-%s",
+	return fmt.Sprintf("puddle-%s:%s-%s",
 		langName,
 		firstNonEmpty(duckdbVer, "latest"),
 		firstNonEmpty(runtimeVer, "default"),
 	)
-	if flagArch != "" {
-		tag += "-" + flagArch
-	}
-	return tag
 }

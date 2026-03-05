@@ -18,13 +18,7 @@ var listCmd = &cobra.Command{
 
 		for _, name := range lang.Names() {
 			l := lang.Registry[name]
-
-			extra := ""
-			if l.DefaultLib != "" {
-				extra = fmt.Sprintf(", lib=%s", l.DefaultLib)
-			}
-
-			fmt.Printf("  %-10s %-10s runtime=%s, duckdb=%s%s\n", name, l.Name, l.DefaultRuntime, l.DefaultDuckDB, extra)
+			fmt.Printf("  %-10s %-10s runtime=%s, duckdb=%s\n", name, l.Name, l.DefaultRuntime, l.DefaultDuckDB)
 			if l.VersionRange != "" {
 				fmt.Printf("             %s\n", l.VersionRange)
 			}

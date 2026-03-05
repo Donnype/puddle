@@ -10,7 +10,7 @@ var shellCmd = &cobra.Command{
 	Long: `Start a bash shell inside a container for the specified language binding.
 The current directory is mounted at /work inside the container.
 
-The language can be omitted inside a puddle session (see "puddle use").
+The language can be omitted if a global default is set (see "puddle use --global").
 
 This is equivalent to "puddle run <language>" (without --repl).`,
 	Args: cobra.RangeArgs(0, 1),
@@ -24,6 +24,6 @@ This is equivalent to "puddle run <language>" (without --repl).`,
 }
 
 func init() {
-	addBuildFlags(shellCmd)
+	addVersionFlags(shellCmd)
 	shellCmd.Flags().StringArrayVarP(&flagEnv, "env", "e", nil, "set environment variables (KEY=VALUE), can be repeated")
 }

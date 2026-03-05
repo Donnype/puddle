@@ -15,75 +15,38 @@ var showCmd = &cobra.Command{
 	Long: `Display the resolved puddle configuration and where each value comes from.
 
 Sources (highest to lowest priority):
-  session  — from the active session file (puddle use)
-  global   — from ~/.config/puddle/config.json (puddle use --global)
+  global   — from ~/.config/puddle/config.json (puddle use)
   default  — built-in registry default`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		sess := config.LoadSession()
 		global := config.LoadGlobal()
-		sessionID := config.ActiveSessionID()
 
-		// Resolve language.
-		langName, langSource := "", ""
-		if sess.Lang != "" {
-			langName, langSource = sess.Lang, "session"
-		} else if global.Lang != "" {
-			langName, langSource = global.Lang, "global"
-		}
-
-		if langName == "" {
+		if global.Lang == "" {
 			fmt.Println("No puddle configuration active.")
 			fmt.Println()
-			fmt.Println("Start a session:   puddle use <language>")
-			fmt.Println("Set global default: puddle use <language> --global")
+			fmt.Println("Set a default: puddle use <language>")
 			return nil
 		}
 
-		l, err := lang.Get(langName)
+		l, err := lang.Get(global.Lang)
 		if err != nil {
-			fmt.Printf("Language: %s (%s) — unknown language\n", langName, langSource)
+			fmt.Printf("Language: %s (global) — unknown language\n", global.Lang)
 			return nil
 		}
 
-		// Resolve each version with source tracking.
-		duckdbVer, duckdbSrc := resolveWithSource(
-			sess.DuckDBVersion, global.DuckDBVersion, l.DefaultDuckDB,
-		)
-		rtVer, rtSrc := resolveWithSource(
-			sess.RuntimeVersion, global.RuntimeVersion, l.DefaultRuntime,
-		)
-		libVer, libSrc := resolveWithSource(
-			sess.LibVersion, global.LibVersion, l.DefaultLib,
-		)
+		duckdbVer, duckdbSrc := resolveWithSource(global.DuckDBVersion, l.DefaultDuckDB)
+		rtVer, rtSrc := resolveWithSource(global.RuntimeVersion, l.DefaultRuntime)
 
-		// Session info.
-		if sessionID != "" {
-			named := config.IsNamedSession(sessionID)
-			if named {
-				fmt.Printf("Session:         %s\n", sessionID)
-			} else {
-				fmt.Printf("Session:         %s (unnamed)\n", sessionID)
-			}
-			fmt.Printf("                 %s\n", config.SessionPath(sessionID))
-		}
-
-		fmt.Printf("Language:        %-12s  ← %s\n", langName+" ("+l.Name+")", langSource)
+		fmt.Printf("Language:        %-12s  ← global\n", global.Lang+" ("+l.Name+")")
 		fmt.Printf("DuckDB version:  %-12s  ← %s\n", duckdbVer, duckdbSrc)
 		fmt.Printf("Runtime version: %-12s  ← %s\n", rtVer, rtSrc)
-		if libVer != "" {
-			fmt.Printf("Lib version:     %-12s  ← %s\n", libVer, libSrc)
-		}
 
 		return nil
 	},
 }
 
 // resolveWithSource returns the resolved value and its source label.
-func resolveWithSource(sessVal, globalVal, defaultVal string) (string, string) {
-	if sessVal != "" {
-		return sessVal, "session"
-	}
+func resolveWithSource(globalVal, defaultVal string) (string, string) {
 	if globalVal != "" {
 		return globalVal, "global"
 	}
