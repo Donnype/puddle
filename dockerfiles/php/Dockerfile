@@ -22,9 +22,6 @@ RUN ARCH=$(dpkg --print-architecture) && \
     if [[ $DUCKDB_VERSION == 1.2.* ]] && [[ $DUCKDB_PHP_VERSION == 2.* ]]; then \
         DUCKDB_PHP_VERSION="1.2.1"; \
     fi && \
-    if php -r 'exit(version_compare(PHP_VERSION,"8.3","<")?0:1);' && [[ $DUCKDB_PHP_VERSION == 2.* ]]; then \
-        DUCKDB_PHP_VERSION="1.2.1"; \
-    fi && \
     composer init --name=puddle/repl --no-interaction && \
     if [[ $DUCKDB_PHP_VERSION == 2.* ]]; then \
         (curl -sfL "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/libduckdb-linux-${ARCH}.zip" -o /tmp/duckdb.zip \
@@ -35,9 +32,6 @@ RUN ARCH=$(dpkg --print-architecture) && \
             || cp vendor/satur.io/duckdb/header/linux-aarch64/duckdb-ffi.h .) \
     ; else \
         composer require "satur.io/duckdb:v${DUCKDB_PHP_VERSION}" \
-    ; fi && \
-    if [ -f vendor/satur.io/duckdb/aliases.php ] && grep -q 'class_alias' vendor/satur.io/duckdb/aliases.php; then \
-        echo '<?php // patched: class_alias on internal classes fails on PHP 8.2' > vendor/satur.io/duckdb/aliases.php \
     ; fi
 
 COPY repl.php .
