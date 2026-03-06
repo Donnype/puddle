@@ -55,19 +55,20 @@ Pass a SQL file as a second argument:
 		}
 		// Append ";\n.quit\n" so the REPL exits cleanly without relying
 		// on stdin EOF (Docker attach CloseWrite is unreliable on macOS).
-		// The extra ";" is harmless if the SQL already ends with one.
 		if flagSQLCmd != "" {
 			if flagSQLCmd == "-" {
-				sqlReader = io.MultiReader(os.Stdin, strings.NewReader(";\n.quit\n"))
+				sqlReader = io.MultiReader(os.Stdin, strings.NewReader("\n.quit\n"))
 			} else {
-				sqlReader = strings.NewReader(flagSQLCmd + ";\n.quit\n")
+				sql := strings.TrimRight(flagSQLCmd, "; \t\n")
+				sqlReader = strings.NewReader(sql + ";\n.quit\n")
 			}
 		} else if len(sqlArgs) > 0 {
 			data, err := os.ReadFile(sqlArgs[0])
 			if err != nil {
 				return fmt.Errorf("reading SQL file: %w", err)
 			}
-			sqlReader = strings.NewReader(string(data) + ";\n.quit\n")
+			sql := strings.TrimRight(string(data), "; \t\n")
+			sqlReader = strings.NewReader(sql + ";\n.quit\n")
 		}
 
 		// SQL mode (batch or interactive REPL).

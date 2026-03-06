@@ -40,16 +40,20 @@ var cleanCmd = &cobra.Command{
 
 		var failed int
 		for _, img := range images {
-			if err := docker.RemoveImage(ctx, img.ID, flagForce); err != nil {
-				fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
-				failed++
+			// Remove each tag individually rather than by ID.
+			// Images pulled from GHCR have both a remote and local tag;
+			// "docker rmi <id>" refuses to remove multi-tagged images without --force.
+			for _, tag := range img.Tags {
+				if err := docker.RemoveImage(ctx, tag, flagForce); err != nil {
+					fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+					failed++
+				}
 			}
 		}
 
-		removed := len(images) - failed
-		fmt.Fprintf(os.Stderr, "Removed %d image(s).\n", removed)
+		fmt.Fprintf(os.Stderr, "Removed %d image(s).\n", len(images))
 		if failed > 0 {
-			return fmt.Errorf("failed to remove %d image(s) (try --force)", failed)
+			return fmt.Errorf("failed to remove %d tag(s) (try --force)", failed)
 		}
 		return nil
 	},
