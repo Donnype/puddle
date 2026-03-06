@@ -17,9 +17,9 @@ ENV DUCKDB_PHP_PATH=/app
 
 # Detect arch at build time (works without buildx).
 # DuckDB < 1.3.0 used "aarch64" in asset names; 1.3.0+ uses "arm64".
-# satur.io/duckdb v2.x requires DuckDB >= 1.3.0; fall back to v1.2.1 for older.
+# satur.io/duckdb v2.0.4 requires DuckDB >= 1.4.0; fall back to v1.2.1 for older.
 RUN ARCH=$(dpkg --print-architecture) && \
-    if [[ $DUCKDB_VERSION == 1.2.* ]] && [[ $DUCKDB_PHP_VERSION == 2.* ]]; then \
+    if [[ $DUCKDB_VERSION == 1.[23].* ]] && [[ $DUCKDB_PHP_VERSION == 2.* ]]; then \
         DUCKDB_PHP_VERSION="1.2.1"; \
     fi && \
     composer init --name=puddle/repl --no-interaction && \
