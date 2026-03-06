@@ -4,7 +4,7 @@ FROM php:${PHP_VERSION}-cli
 SHELL ["/bin/bash", "-c"]
 
 ARG DUCKDB_VERSION=1.4.4
-ARG DUCKDB_PHP_VERSION=2.0.3
+ARG DUCKDB_PHP_VERSION=2.0.4
 
 WORKDIR /app
 
@@ -35,6 +35,9 @@ RUN ARCH=$(dpkg --print-architecture) && \
             || cp vendor/satur.io/duckdb/header/linux-aarch64/duckdb-ffi.h .) \
     ; else \
         composer require "satur.io/duckdb:v${DUCKDB_PHP_VERSION}" \
+    ; fi && \
+    if [ -f vendor/satur.io/duckdb/aliases.php ] && grep -q 'class_alias' vendor/satur.io/duckdb/aliases.php; then \
+        echo '<?php // patched: class_alias on internal classes fails on PHP 8.2' > vendor/satur.io/duckdb/aliases.php \
     ; fi
 
 COPY repl.php .

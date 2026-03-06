@@ -108,4 +108,4 @@ jobs:
           build-args: |
             DUCKDB_VERSION=${{ matrix.duckdb }}
             ${{ steps.rt.outputs.arg }}=${{ matrix.runtime.version }}
-            ${{ matrix.runtime.lang == 'php' && format('DUCKDB_PHP_VERSION=2.0.3') || '' }}
+            ${{ matrix.runtime.lang == 'php' && format('DUCKDB_PHP_VERSION=2.0.4') || '' }}
